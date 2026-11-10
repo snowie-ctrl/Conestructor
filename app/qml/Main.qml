@@ -159,6 +159,7 @@ ApplicationWindow {
 
         CanvasView {
             id: canvasView
+            objectName: "canvasView"
             Layout.fillWidth: true
             Layout.fillHeight: true
 
@@ -181,6 +182,11 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: 10
                 spacing: 12
+
+                ElementPalette {
+                    canvas: canvasView
+                    Layout.fillWidth: true
+                }
 
                 Item { Layout.fillHeight: true }
             }

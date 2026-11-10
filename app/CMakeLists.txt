@@ -34,6 +34,9 @@ qt_add_qml_module(conestructor_core
         qml/ElementView.qml
         qml/StatusBar.qml
         qml/ErrorBanner.qml
+        qml/ElementPalette.qml
+        qml/RulerView.qml
+        qml/TargetsView.qml
         qml/logic/units.mjs
         qml/logic/conerows.mjs
         qml/logic/elements.mjs
