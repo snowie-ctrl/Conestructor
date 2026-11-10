@@ -318,6 +318,7 @@ Item {
             zoom: canvas.zoom
             opacity: 0.6
         }
+        ConePreview { zoom: canvas.zoom }
         RulerView { zoom: canvas.zoom }
         TargetsView { zoom: canvas.zoom }
     }

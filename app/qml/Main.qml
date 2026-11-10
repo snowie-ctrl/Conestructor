@@ -55,12 +55,31 @@ ApplicationWindow {
         return TrackStore.previewOn && TrackStore.preview ? TrackStore.preview.cones.length : 0
     }
 
+    function exportCones() {
+        const result = TrackStore.processed()
+        if (!result)
+            return
+        exportDialog.pending = result
+        exportDialog.open()
+    }
+
+    function writeExport(url) {
+        const result = exportDialog.pending
+        const path = FileIO.toLocalPath(url)
+        const error = FileIO.writeConeExport(path, result.targetDistance, result.cones)
+        if (error !== "")
+            TrackStore.report(error, null)
+        else
+            TrackStore.message = qsTr("Exported %1 cones to %2").arg(result.cones.length).arg(path)
+    }
+
     menuBar: MenuBar {
         Menu {
             id: fileMenu
             title: qsTr("&File")
             Action { text: qsTr("&New"); shortcut: StandardKey.New; onTriggered: window.newTrack() }
             Action { text: qsTr("Load lot photo…"); onTriggered: photoDialog.open() }
+            Action { text: qsTr("Export cones (JSON)…"); onTriggered: window.exportCones() }
             MenuSeparator {}
             Action { text: qsTr("&Quit"); shortcut: StandardKey.Quit; onTriggered: Qt.quit() }
         }
@@ -205,6 +224,16 @@ ApplicationWindow {
         title: qsTr("Load lot photo")
         nameFilters: [qsTr("Photos (*.png *.jpg *.jpeg)")]
         onAccepted: probe.check(selectedFile)
+    }
+
+    FileDialog {
+        id: exportDialog
+        property var pending: null      // the processed track to write ("result" is the dialog's own)
+        title: qsTr("Export cones")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("JSON files (*.json)")]
+        defaultSuffix: "json"
+        onAccepted: window.writeExport(selectedFile)
     }
 
     PreferencesDialog { id: preferences }

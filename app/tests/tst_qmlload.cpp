@@ -1,5 +1,9 @@
 #include <QQmlApplicationEngine>
+#include <QFile>
 #include <QJSValue>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -7,6 +11,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 #include <QtMath>
 #include <cmath>
 #include <QtQml/QQmlExtensionPlugin>
@@ -352,6 +357,88 @@ private slots:
         settings->setProperty("units", QStringLiteral("m"));
         QCOMPARE(box(field(QStringLiteral("Length")))->property("text").toString(), QStringLiteral("20 m"));
         settings->setProperty("units", QStringLiteral("ftin"));
+    }
+
+    // Placing cones draws them; the toggles, Clear preview, the banners for what is missing, and the export file.
+    void thePreviewAndTheExport()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QVERIFY(canvas && store);
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(true)));
+        QTRY_VERIFY(canvas->property("fitPending").toBool() == false);
+
+        // Cone pictures on the canvas, and where the first one sits.
+        auto cones = [&]() {
+            QList<QQuickItem *> out;
+            for (QQuickItem *item : allItems(canvas))
+                if (item->isVisible() && item->property("source").toString().endsWith(QStringLiteral("-cone.png")))
+                    out << item;
+            return out;
+        };
+        auto placed = [&]() {
+            QVariant n;
+            QMetaObject::invokeMethod(window, "conesPlaced", Q_RETURN_ARG(QVariant, n));
+            return n.toInt();
+        };
+        auto banner = [&]() -> QQuickItem * {
+            for (QQuickItem *item : allItems(window->contentItem()))
+                if (QByteArray(item->metaObject()->className()).startsWith("ErrorBanner"))
+                    return item;
+            return nullptr;
+        };
+
+        QVERIFY(placed() > 40);
+        QCOMPARE(cones().size(), placed());
+        QVERIFY(store->property("message").toString().startsWith(QStringLiteral("Placed ")));
+
+        // Show cones off hides them; on brings them back.
+        store->setProperty("showCones", false);
+        QCOMPARE(cones().size(), 0);
+        store->setProperty("showCones", true);
+        QCOMPARE(cones().size(), placed());
+
+        // Moving an element while the preview is on moves its cones.
+        const double before = cones().first()->x();
+        QVariantMap args{ { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, args));
+        QTRY_VERIFY(std::abs(cones().first()->x() - before) > 1);
+
+        // The export: metres, the axes sentence, the target distance, every cone.
+        QTemporaryDir out;
+        const QString path = out.filePath(QStringLiteral("cones.json"));
+        QMetaObject::invokeMethod(window, "exportCones");
+        QMetaObject::invokeMethod(window, "writeExport", Q_ARG(QVariant, QUrl::fromLocalFile(path)));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject doc = QJsonDocument::fromJson(file.readAll()).object();
+        QCOMPARE(doc.value("units").toString(), QStringLiteral("m"));
+        QVERIFY(doc.value("axes").toString().contains(QStringLiteral("y to the left")));
+        QCOMPARE(doc.value("targetDistance").toDouble(), 100.0);
+        QCOMPARE(doc.value("cones").toArray().size(), placed());
+        QVERIFY(store->property("message").toString().startsWith(QStringLiteral("Exported ")));
+
+        // Clear preview removes the overlay.
+        QMetaObject::invokeMethod(store, "clearPreview");
+        QCOMPARE(cones().size(), 0);
+
+        // A new track has no ruler; a ruler without a length gets "Show me", which selects it.
+        QMetaObject::invokeMethod(window, "newTrack");
+        QMetaObject::invokeMethod(store, "placeCones");
+        QVERIFY(banner()->isVisible());
+        QCOMPARE(banner()->property("text").toString(),
+                 QStringLiteral("Place the ruler on something of known length, then set its real length"));
+        QVariantMap ruler{ { "a", QVariantMap{ { "x", 100 }, { "y", 100 } } },
+                           { "b", QVariantMap{ { "x", 300 }, { "y", 100 } } }, { "realLength", 0 } };
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("setRuler")), Q_ARG(QVariant, ruler));
+        QMetaObject::invokeMethod(store, "placeCones");
+        QCOMPARE(banner()->property("text").toString(), QStringLiteral("Set the ruler's real length"));
+        QMetaObject::invokeMethod(canvas, "showTarget", Q_ARG(QVariant, banner()->property("target")));
+        QCOMPARE(store->property("selectedId").toString(), QStringLiteral("ruler"));
     }
 };
 

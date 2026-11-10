@@ -37,6 +37,7 @@ qt_add_qml_module(conestructor_core
         qml/ElementPalette.qml
         qml/RulerView.qml
         qml/TargetsView.qml
+        qml/ConePreview.qml
         qml/PropField.qml
         qml/PropertyPanel.qml
         qml/PreferencesDialog.qml
