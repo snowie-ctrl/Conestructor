@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import Conestructor
 import "logic/elements.mjs" as Elements
+import "logic/frame.mjs" as Frame
 import "logic/snapping.mjs" as Snapping
 import "logic/units.mjs" as Units
 import "logic/viewport.mjs" as Viewport
@@ -99,6 +100,12 @@ Item {
         const w = toWorld(sx, sy)
         const reach = 10 / zoom
         const t = TrackStore.track
+        const selected = TrackStore.selectedElement
+        if (selected && mpp > 0) {
+            const h = Elements.rotateHandle(selected, 24 / zoom * mpp)
+            if (distance({ x: h.x / mpp, y: h.y / mpp }, w) < reach)
+                return { kind: "rotate", id: selected.id }
+        }
         if (t.ruler) {
             if (distance(t.ruler.a, w) < reach)
                 return { kind: "rulerA" }
@@ -109,6 +116,11 @@ Item {
             const p = t.targets[which]
             if (p && distance(p, w) < 16 / zoom)
                 return { kind: "target", which: which }
+        }
+        if (mpp > 0) {
+            const id = Elements.hitTest(t.elements, { x: w.x * mpp, y: w.y * mpp }, 4 / zoom * mpp)
+            if (id !== "")
+                return { kind: "element", id: id }
         }
         if (t.ruler && Elements.pointSegmentDistance(w, t.ruler.a, t.ruler.b) < 6 / zoom)
             return { kind: "ruler" }
@@ -162,6 +174,17 @@ Item {
         TrackStore.seal()
     }
 
+    // Puts the element where the drag says, snapped to the nearest open end unless Ctrl is held. The element
+    // unjoins as it moves and joins again wherever it lands snapped.
+    function placeDragged(moved, ctrl) {
+        const snap = ctrl ? null : Snapping.findSnap(TrackStore.track.elements, moved, snapMetres())
+        TrackStore.run("place", {
+            id: moved.id, x: moved.x, y: moved.y, rotation: moved.rotation,
+            snap: snap ? { ownEnd: snap.ownEnd, id: snap.targetId, end: snap.targetEnd } : null,
+            verb: "Move", mergeKey: gestureKey
+        })
+    }
+
     function pressAt(e) {
         canvas.forceActiveFocus()
         gestureKey = TrackStore.newGestureKey()
@@ -170,15 +193,29 @@ Item {
             mode = "pan"
             return
         }
+        const hit = hitAt(e.x, e.y)
+        if (e.button === Qt.RightButton) {
+            if (hit && hit.kind === "element") {
+                TrackStore.select(hit.id)
+                elementMenu.popup()
+            }
+            return
+        }
         if (e.button !== Qt.LeftButton)
             return
-        const hit = hitAt(e.x, e.y)
         if (!hit) {
             TrackStore.select("")
             mode = "pan"
             return
         }
         const t = TrackStore.track
+        if (hit.kind === "element" || hit.kind === "rotate") {
+            TrackStore.select(hit.id)
+            press.el = TrackStore.element(hit.id)
+            press.w = toWorld(e.x, e.y)
+            mode = hit.kind === "rotate" ? "rotate" : "move"
+            return
+        }
         if (hit.kind === "rulerA" || hit.kind === "rulerB" || hit.kind === "ruler") {
             TrackStore.select("ruler")
             press.ruler = t.ruler
@@ -200,6 +237,19 @@ Item {
         if (mode === "pan") {
             panX = press.panX + e.x - press.sx
             panY = press.panY + e.y - press.sy
+        } else if (mode === "move") {
+            const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
+            placeDragged(Object.assign({}, press.el, { x: press.el.x + dx * mpp, y: press.el.y + dy * mpp }), ctrl)
+        } else if (mode === "rotate") {
+            const cx = press.el.x / mpp
+            const cy = press.el.y / mpp
+            const w = toWorld(e.x, e.y)
+            let rotation = press.el.rotation
+                + (Math.atan2(w.y - cy, w.x - cx) - Math.atan2(press.w.y - cy, press.w.x - cx)) * 180 / Math.PI
+            if ((e.modifiers & Qt.ShiftModifier) !== 0)
+                rotation = Math.round(rotation / 15) * 15
+            TrackStore.run("place", { id: press.el.id, x: press.el.x, y: press.el.y, rotation: Frame.normalize(rotation),
+                                      snap: null, verb: "Rotate", mergeKey: gestureKey })
         } else if (mode === "rulerA" || mode === "rulerB" || mode === "ruler") {
             const r = press.ruler
             const a = mode === "rulerB" ? r.a : { x: r.a.x + dx, y: r.a.y + dy }
@@ -322,11 +372,19 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-        cursorShape: canvas.mode === "pan" ? Qt.ClosedHandCursor : Qt.ArrowCursor
+        cursorShape: canvas.mode === "pan" ? Qt.ClosedHandCursor
+                     : canvas.mode === "move" || canvas.mode === "target" ? Qt.SizeAllCursor
+                     : Qt.ArrowCursor
         onPressed: (e) => canvas.pressAt(e)
         onPositionChanged: (e) => canvas.moveTo(e)
         onReleased: (e) => canvas.releaseAt(e)
         onExited: canvas.hover = null
         onWheel: (w) => canvas.zoomBy(Math.pow(1.0015, w.angleDelta.y), w.x, w.y)
+    }
+
+    Menu {
+        id: elementMenu
+        MenuItem { text: qsTr("Duplicate"); onTriggered: TrackStore.duplicateSelected() }
+        MenuItem { text: qsTr("Delete"); onTriggered: TrackStore.deleteSelected() }
     }
 }
