@@ -1,0 +1,19 @@
+# Build output
+build/
+**/build/
+
+# Qt Creator per-user files (contain local paths)
+*.user
+*.user.*
+.qtcreator/
+.qtc_clangd/
+
+# Satellite map screenshots of local practice lots (not ours to republish)
+Conestructor/assets/images/duckPondBirdeye.png
+Conestructor/assets/images/riverwindBirdeye.png
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

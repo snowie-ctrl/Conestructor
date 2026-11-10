@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/">
+        <file>images/blueprintBackground.png</file>
+        <file>images/duckPondBirdeye.png</file>
+        <file>images/riverwindBirdeye.png</file>
+        <file>images/sideways-cone.png</file>
+        <file>images/upright-cone.png</file>
+    </qresource>
+</RCC>
