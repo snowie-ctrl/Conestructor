@@ -34,6 +34,18 @@ private slots:
         QVERIFY(window);
         QCOMPARE(window->title(), QStringLiteral("Conestructor 0.2 \u2014 Untitled"));
     }
+
+    void theExampleTrackDrawsAndPlacesCones()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        QObject *root = engine.rootObjects().first();
+        QVERIFY(QMetaObject::invokeMethod(root, "loadDemo", Q_ARG(QVariant, QVariant(true))));
+        QTest::qWait(300);
+        QVariant count;
+        QVERIFY(QMetaObject::invokeMethod(root, "conesPlaced", Q_RETURN_ARG(QVariant, count)));
+        QVERIFY2(count.toInt() > 40, qPrintable(QStringLiteral("%1 cones").arg(count.toInt())));
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

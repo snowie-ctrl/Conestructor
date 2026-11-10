@@ -348,3 +348,22 @@ export function rotateHandle(el, extraMetres) {
         reach = Math.max(reach, Math.abs(p.y))
     return toWorld(el, { x: 0, y: -(reach + el.props.trackWidth / 2 + extraMetres) })
 }
+
+// The band (as wide as the track) around a centreline, as one closed outline: one side forward, the other back.
+// Drawn as a fill, so a translucent band never darkens where a thick stroke's segments would overlap on a curve.
+export function bandPolygon(path, halfWidth) {
+    if (path.length < 2)
+        return []
+    const left = []
+    const right = []
+    for (let i = 0; i < path.length; i++) {
+        const a = path[Math.max(0, i - 1)]
+        const b = path[Math.min(path.length - 1, i + 1)]
+        const length = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        const nx = -(b.y - a.y) / length
+        const ny = (b.x - a.x) / length
+        left.push({ x: path[i].x + nx * halfWidth, y: path[i].y + ny * halfWidth })
+        right.push({ x: path[i].x - nx * halfWidth, y: path[i].y - ny * halfWidth })
+    }
+    return left.concat(right.reverse())
+}

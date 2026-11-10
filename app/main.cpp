@@ -30,6 +30,12 @@ int main(int argc, char *argv[])
         return -1;
     QObject *root = engine.rootObjects().first();
 
+    // Dev affordance for screenshots: open on the example track ("track"), with its cones placed ("cones").
+    // Does nothing unless set.
+    const QString demo = qEnvironmentVariable("CONESTRUCTOR_DEMO");
+    if (!demo.isEmpty())
+        QMetaObject::invokeMethod(root, "loadDemo", Q_ARG(QVariant, QVariant(demo == QStringLiteral("cones"))));
+
     // Dev affordance for layout checks: save the window to a PNG after a delay, then quit. Does nothing unless set.
     const QString grabPath = qEnvironmentVariable("CONESTRUCTOR_GRAB");
     if (!grabPath.isEmpty()) {

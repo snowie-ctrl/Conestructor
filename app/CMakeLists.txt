@@ -22,12 +22,27 @@ endforeach()
 string(JOIN "," CONESTRUCTOR_BACKGROUND_LIST ${CONESTRUCTOR_LOCAL_BACKGROUNDS})
 
 # The QML module and the small C++ services live in a static library, so the tests load the real thing.
+set_source_files_properties(qml/TrackStore.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_library(conestructor_core STATIC)
 qt_add_qml_module(conestructor_core
     URI Conestructor
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/TrackStore.qml
+        qml/CanvasView.qml
+        qml/ElementView.qml
+        qml/StatusBar.qml
+        qml/ErrorBanner.qml
+        qml/logic/units.mjs
+        qml/logic/conerows.mjs
+        qml/logic/elements.mjs
+        qml/logic/snapping.mjs
+        qml/logic/commands.mjs
+        qml/logic/frame.mjs
+        qml/logic/postprocess.mjs
+        qml/logic/viewport.mjs
+        qml/logic/demo.mjs
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp

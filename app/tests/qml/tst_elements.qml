@@ -165,6 +165,16 @@ TestCase {
         near(turned.y, 0, 1e-9, "turned y")
     }
 
+    function test_theBandIsAPolygonAroundTheCentreline() {
+        const ring = Elements.bandPolygon([{ x: -10, y: 0 }, { x: 10, y: 0 }], 2)
+        compare(JSON.stringify(ring), JSON.stringify([{ x: -10, y: 2 }, { x: 10, y: 2 }, { x: 10, y: -2 }, { x: -10, y: -2 }]))
+        const bent = Elements.bandPolygon([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], 1)
+        compare(bent.length, 6)
+        for (const p of bent)
+            verify(isFinite(p.x) && isFinite(p.y), "finite")
+        compare(Elements.bandPolygon([{ x: 0, y: 0 }], 1).length, 0)
+    }
+
     function test_normalizeAngle() {
         compare(Elements.normalizeAngle(190), -170)
         compare(Elements.normalizeAngle(-190), 170)
