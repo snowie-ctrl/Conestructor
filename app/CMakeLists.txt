@@ -30,6 +30,8 @@ qt_add_qml_module(conestructor_core
         qml/Main.qml
     SOURCES
         services/AppInfo.h
+        services/Settings.h services/Settings.cpp
+        services/FileIO.h services/FileIO.cpp
     RESOURCES
         assets/images/blueprintBackground.png
         assets/images/crosshair.svg

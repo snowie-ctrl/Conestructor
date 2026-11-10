@@ -14,3 +14,6 @@ endfunction()
 conestructor_test(tst_qmlload
     SOURCES tst_qmlload.cpp
     LIBS conestructor_coreplugin Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+
+conestructor_test(tst_settings SOURCES tst_settings.cpp LIBS conestructor_core)
+conestructor_test(tst_fileio SOURCES tst_fileio.cpp LIBS conestructor_core)
