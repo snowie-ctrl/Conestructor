@@ -92,6 +92,8 @@ ApplicationWindow {
                 enabled: TrackStore.selectedId !== ""
                 onTriggered: TrackStore.deleteSelected()
             }
+            MenuSeparator {}
+            Action { text: qsTr("Preferences…"); shortcut: "Ctrl+,"; onTriggered: preferences.open() }
         }
         Menu {
             id: viewMenu
@@ -188,7 +190,10 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
 
-                Item { Layout.fillHeight: true }
+                PropertyPanel {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
             }
         }
     }
@@ -201,6 +206,8 @@ ApplicationWindow {
         nameFilters: [qsTr("Photos (*.png *.jpg *.jpeg)")]
         onAccepted: probe.check(selectedFile)
     }
+
+    PreferencesDialog { id: preferences }
 
     // Tries a chosen photo before it replaces the background, so one that fails to load leaves the old one.
     Image {

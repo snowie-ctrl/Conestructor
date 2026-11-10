@@ -20,6 +20,17 @@ class TestQmlLoad : public QObject
 
     QTemporaryDir dir;
 
+    // Every item drawn under `root` (Repeater delegates have no QObject parent, so findChildren misses them).
+    static QList<QQuickItem *> allItems(QQuickItem *root)
+    {
+        QList<QQuickItem *> out;
+        for (QQuickItem *child : root->childItems()) {
+            out << child;
+            out << allItems(child);
+        }
+        return out;
+    }
+
 private slots:
     void initTestCase()
     {
@@ -203,6 +214,144 @@ private slots:
         window->resize(1200, 800);
         QTRY_COMPARE(canvas->width() < 1200, true);
         QCOMPARE(canvas->property("zoom").toDouble(), zoomBefore);
+    }
+
+    // The property panel with real clicks and typing.
+    void thePropertyPanelEditsTheSelection()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(window));
+        auto *canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QObject *settings = engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        QVERIFY(canvas && store && settings);
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QTRY_VERIFY(canvas->property("fitPending").toBool() == false);
+
+        auto element = [&](const QString &id) {
+            QVariant v;
+            QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+            return qvariant_cast<QJSValue>(v).toVariant().toMap();
+        };
+        auto prop = [&](const QString &id, const QString &key) {
+            return element(id).value(QStringLiteral("props")).toMap().value(key).toDouble();
+        };
+        auto joined = [&](const QString &id, const QString &end) {
+            return !element(id).value(QStringLiteral("joins")).toMap().value(end).isNull();
+        };
+        // The visible setting with this label, and its text box.
+        auto field = [&](const QString &label) -> QQuickItem * {
+            for (QQuickItem *item : allItems(window->contentItem())) {
+                const QVariant def = item->property("def");
+                if (def.isValid() && item->isVisible()
+                    && def.toMap().value(QStringLiteral("label")).toString() == label)
+                    return item;
+            }
+            return nullptr;
+        };
+        auto box = [&](QQuickItem *f) -> QQuickItem * {
+            for (QQuickItem *item : allItems(f))
+                if (QByteArray(item->metaObject()->className()).contains("TextField"))
+                    return item;
+            return nullptr;
+        };
+        auto click = [&](QQuickItem *item) {
+            QTest::mouseClick(window, Qt::LeftButton, {},
+                              item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+        };
+        // QTest::keyClicks takes only widgets; this types into the window one character at a time.
+        auto typeText = [&](const QString &text) {
+            for (const QChar c : text)
+                QTest::keyClick(window, c.toLatin1());
+        };
+        auto retype = [&](QQuickItem *input, const QString &text) {
+            click(input);
+            QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+            typeText(text);
+        };
+        auto label = [&]() { return store->property("undoLabel").toString(); };
+
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QStringLiteral("e3")));      // the Turn
+        QQuickItem *width = field(QStringLiteral("Track width"));
+        QVERIFY(width);
+        QVERIFY(field(QStringLiteral("Turn angle")));
+        QVERIFY(!field(QStringLiteral("Exit radius")));
+        QQuickItem *input = box(width);
+        QVERIFY(input);
+        QCOMPARE(input->property("text").toString(), QStringLiteral("13' 1\""));
+
+        // Typing applies as you go, keeps the chain joined, and is one undo step.
+        retype(input, QStringLiteral("12' 6\""));
+        QVERIFY(std::abs(prop("e3", "trackWidth") - 3.81) < 1e-9);
+        QVERIFY(joined("e2", "B") && joined("e4", "A"));
+        // Not a value: red, element unchanged; Esc puts the old text back.
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        typeText(QStringLiteral("abc"));
+        QVERIFY(width->property("bad").toBool());
+        QVERIFY(std::abs(prop("e3", "trackWidth") - 3.81) < 1e-9);
+        QTest::keyClick(window, Qt::Key_Escape);
+        QVERIFY(!width->property("bad").toBool());
+        QCOMPARE(input->property("text").toString(), QStringLiteral("12' 6\""));
+        // Editing keys stay in the field: Backspace and Delete do not delete the element, F does not fit.
+        const double zoom = canvas->property("zoom").toDouble();
+        QTest::keyClick(window, Qt::Key_End);
+        QTest::keyClick(window, Qt::Key_Backspace);
+        QTest::keyClick(window, Qt::Key_Delete);
+        typeText(QStringLiteral("f"));
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+        QCOMPARE(canvas->property("zoom").toDouble(), zoom);
+        QTest::keyClick(window, Qt::Key_Escape);
+        // The up arrow steps one inch; Enter ends the bout, and one undo takes it all back.
+        QTest::keyClick(window, Qt::Key_Up);
+        QVERIFY(std::abs(prop("e3", "trackWidth") - (3.81 + 0.0254)) < 1e-9);
+        QTest::keyClick(window, Qt::Key_Return);
+        QCOMPARE(label(), QStringLiteral("Change Track width"));
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(prop("e3", "trackWidth"), 4.0);
+        // Out of limits: kept within them, with a note.
+        retype(input, QStringLiteral("50 m"));
+        QCOMPARE(prop("e3", "trackWidth"), 20.0);
+        QCOMPARE(width->property("note").toString(), QStringLiteral("Kept within 3' 3\" to 65' 7\""));
+        QTest::keyClick(window, Qt::Key_Return);
+
+        // A changing radius shows Exit radius.
+        QQuickItem *changing = nullptr;
+        for (QQuickItem *item : allItems(window->contentItem()))
+            if (item->isVisible() && item->property("text").toString() == QStringLiteral("Changing")
+                && QByteArray(item->metaObject()->className()).contains("Button"))
+                changing = item;
+        QVERIFY(changing);
+        click(changing);
+        QCOMPARE(element("e3").value("props").toMap().value("radiusType").toString(), QStringLiteral("changing"));
+        QTRY_VERIFY(field(QStringLiteral("Exit radius")));
+
+        // The ruler's real length: elements keep their photo spots and sizes, chains stay joined; undo restores.
+        const double mppBefore = store->property("mpp").toDouble();
+        const double e1Pixels = element("e1").value("x").toDouble() / mppBefore;
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QStringLiteral("ruler")));
+        QQuickItem *length = field(QStringLiteral("Real length"));
+        QVERIFY(length);
+        retype(box(length), QStringLiteral("30 m"));
+        QTest::keyClick(window, Qt::Key_Return);
+        const double mppAfter = store->property("mpp").toDouble();
+        QVERIFY(std::abs(mppAfter - mppBefore * 1.5) < 1e-12);
+        QVERIFY(std::abs(element("e1").value("x").toDouble() / mppAfter - e1Pixels) < 1e-6);
+        QCOMPARE(prop("e1", "length"), 20.0);
+        QVERIFY(joined("e1", "B") && joined("e2", "B") && joined("e3", "B"));
+        QCOMPARE(label(), QStringLiteral("Set ruler"));
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(store->property("mpp").toDouble(), mppBefore);
+
+        // Units: switching to metres changes the fields at once.
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QStringLiteral("e1")));
+        QCOMPARE(box(field(QStringLiteral("Length")))->property("text").toString(), QStringLiteral("65' 7\""));
+        settings->setProperty("units", QStringLiteral("m"));
+        QCOMPARE(box(field(QStringLiteral("Length")))->property("text").toString(), QStringLiteral("20 m"));
+        settings->setProperty("units", QStringLiteral("ftin"));
     }
 };
 
