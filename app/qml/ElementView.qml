@@ -14,6 +14,7 @@ Item {
     property var element: null
     property real zoom: 1
     property bool selected: false
+    property bool single: true        // the only thing selected: it shows the rotate handle
     property bool dimmed: false
     property bool backwards: false
 
@@ -32,7 +33,7 @@ Item {
     readonly property var arrows: drawable ? Elements.arrowMarks(element, 8) : []
     // The middle of the centreline (canvas metres), where the warning sits.
     readonly property var middle: drawable ? Elements.pointsAlong(element, [0.5])[0] : null
-    readonly property var handle: drawable && selected ? Elements.rotateHandle(element, 24 / zoom * mpp) : null
+    readonly property var handle: drawable && selected && single ? Elements.rotateHandle(element, 24 / zoom * mpp) : null
 
     visible: drawable
     opacity: dimmed ? 0.3 : 1

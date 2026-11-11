@@ -941,6 +941,138 @@ private slots:
         QTest::keyClick(window, Qt::Key_Up, Qt::ShiftModifier);
         QCOMPARE(element(QStringLiteral("e1")).value("rotation").toDouble(), -16.0);
     }
+    // Ctrl+click, a Shift+drag box, the shared settings, a group drag, duplicate and delete; Ctrl+click on a target
+    // selects it alone.
+    void selectingSeveralElements()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(window));
+        auto *canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QVERIFY(canvas && store);
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QTRY_VERIFY(canvas->property("fitPending").toBool() == false);
+
+        auto element = [&](const QString &id) {
+            QVariant v;
+            QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+            return qvariant_cast<QJSValue>(v).toVariant().toMap();
+        };
+        auto prop = [&](const QString &id, const QString &key) {
+            return element(id).value(QStringLiteral("props")).toMap().value(key).toDouble();
+        };
+        auto joinedTo = [&](const QString &id, const QString &end) {
+            return element(id).value(QStringLiteral("joins")).toMap().value(end).toMap().value(QStringLiteral("id")).toString();
+        };
+        auto selection = [&]() {
+            return qvariant_cast<QJSValue>(store->property("selection")).toVariant().toStringList();
+        };
+        const double mpp = store->property("mpp").toDouble();
+        auto screen = [&](double wx, double wy) {
+            QVariant v;
+            QMetaObject::invokeMethod(canvas, "toScreen", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, wx), Q_ARG(QVariant, wy));
+            const QVariantMap p = qvariant_cast<QJSValue>(v).toVariant().toMap();
+            return canvas->mapToScene(QPointF(p.value("x").toDouble(), p.value("y").toDouble())).toPoint();
+        };
+        auto middle = [&](const QString &id) {
+            const QVariantMap e = element(id);
+            return screen(e.value("x").toDouble() / mpp, e.value("y").toDouble() / mpp);
+        };
+        auto drag = [&](QPoint from, QPoint to, Qt::KeyboardModifiers modifiers = {}) {
+            QTest::mousePress(window, Qt::LeftButton, modifiers, from);
+            for (int i = 1; i <= 8; ++i)
+                QTest::mouseMove(window, from + (to - from) * i / 8);
+            QTest::mouseRelease(window, Qt::LeftButton, modifiers, to);
+        };
+        auto visibleText = [&](const QString &text) {
+            for (QQuickItem *item : allItems(window->contentItem()))
+                if (item->isVisible() && item->property("text").toString() == text)
+                    return true;
+            return false;
+        };
+        auto label = [&]() { return store->property("undoLabel").toString(); };
+
+        // Ctrl+click adds the chicane to the straight; the panel shows what they share.
+        QTest::mouseClick(window, Qt::LeftButton, {}, middle(QStringLiteral("e1")));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::ControlModifier, middle(QStringLiteral("e4")));
+        QCOMPARE(selection(), QStringList({ QStringLiteral("e1"), QStringLiteral("e4") }));
+        QVERIFY(visibleText(QStringLiteral("2 elements selected")));
+        QQuickItem *width = findField(window, QStringLiteral("Track width"));
+        QVERIFY(width);
+        QVERIFY(!findField(window, QStringLiteral("Length")));
+        QQuickItem *input = textBox(width);
+        QTest::mouseClick(window, Qt::LeftButton, {}, input->mapToScene(QPointF(input->width() / 2, input->height() / 2)).toPoint());
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        for (const char c : QByteArray("5 m"))
+            QTest::keyClick(window, c);
+        QTest::keyClick(window, Qt::Key_Return);
+        QCOMPARE(prop(QStringLiteral("e1"), QStringLiteral("trackWidth")), 5.0);
+        QCOMPARE(prop(QStringLiteral("e4"), QStringLiteral("trackWidth")), 5.0);
+        QCOMPARE(label(), QStringLiteral("Change Track width (2 elements)"));
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(prop(QStringLiteral("e1"), QStringLiteral("trackWidth")), 4.0);
+
+        // Different values show "mixed".
+        QVariantMap wide{ { "id", "e1" }, { "key", "trackWidth" }, { "value", 6.0 } };
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("setProp")), Q_ARG(QVariant, wide));
+        QTRY_VERIFY(findField(window, QStringLiteral("Track width"))->property("mixed").toBool());
+        QCOMPARE(textBox(findField(window, QStringLiteral("Track width")))->property("text").toString(), QString());
+        QMetaObject::invokeMethod(store, "undo");
+
+        // Ctrl+click again takes it out.
+        QTest::mouseClick(window, Qt::LeftButton, Qt::ControlModifier, middle(QStringLiteral("e4")));
+        QCOMPARE(selection(), QStringList({ QStringLiteral("e1") }));
+
+        // Ctrl+click on a target while elements are selected selects the target alone; Delete deletes only it.
+        QTest::mouseClick(window, Qt::LeftButton, Qt::ControlModifier, middle(QStringLiteral("e4")));
+        const QVariantMap origin = qvariant_cast<QJSValue>(store->property("track")).property("targets").property("origin").toVariant().toMap();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::ControlModifier, screen(origin.value("x").toDouble(), origin.value("y").toDouble()));
+        QCOMPARE(selection(), QStringList({ QStringLiteral("origin") }));
+        QTest::keyClick(window, Qt::Key_Delete);
+        QCOMPARE(label(), QStringLiteral("Delete Origin"));
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+        QMetaObject::invokeMethod(store, "undo");
+
+        // A Shift+drag box from empty canvas above the slalom's middle down across it selects it (and moves nothing).
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QString()));
+        const QPoint m2 = middle(QStringLiteral("e2"));
+        drag(m2 + QPoint(-10, -60), m2 + QPoint(10, 10), Qt::ShiftModifier);
+        QCOMPARE(selection(), QStringList({ QStringLiteral("e2") }));
+        QCOMPARE(joinedTo(QStringLiteral("e1"), QStringLiteral("B")), QStringLiteral("e2"));
+
+        // A group drag moves both, keeps their join, and breaks the joins to the rest.
+        QTest::mouseClick(window, Qt::LeftButton, {}, middle(QStringLiteral("e1")));
+        QTest::mouseClick(window, Qt::LeftButton, Qt::ControlModifier, middle(QStringLiteral("e2")));
+        QCOMPARE(selection(), QStringList({ QStringLiteral("e1"), QStringLiteral("e2") }));
+        QCOMPARE(joinedTo(QStringLiteral("e1"), QStringLiteral("B")), QStringLiteral("e2"));
+        const QPoint from = middle(QStringLiteral("e1"));
+        drag(from, from + QPoint(0, 150));
+        QCOMPARE(label(), QStringLiteral("Move 2 elements"));
+        QCOMPARE(joinedTo(QStringLiteral("e1"), QStringLiteral("B")), QStringLiteral("e2"));
+        QVERIFY(element(QStringLiteral("e2")).value("joins").toMap().value("B").isNull());
+        QVERIFY(element(QStringLiteral("e3")).value("joins").toMap().value("A").isNull());
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(joinedTo(QStringLiteral("e2"), QStringLiteral("B")), QStringLiteral("e3"));
+
+        // A plain click on one of them, without dragging, selects only it.
+        QTest::mouseClick(window, Qt::LeftButton, {}, middle(QStringLiteral("e1")));
+        QCOMPARE(selection(), QStringList({ QStringLiteral("e1") }));
+
+        // Ctrl+D copies both, keeping their join, and selects the copies; Delete removes them.
+        QTest::mouseClick(window, Qt::LeftButton, Qt::ControlModifier, middle(QStringLiteral("e2")));
+        QTest::keyClick(window, Qt::Key_D, Qt::ControlModifier);
+        QCOMPARE(store->property("elementCount").toInt(), 6);
+        QCOMPARE(selection(), QStringList({ QStringLiteral("e5"), QStringLiteral("e6") }));
+        QCOMPARE(joinedTo(QStringLiteral("e5"), QStringLiteral("B")), QStringLiteral("e6"));
+        QCOMPARE(label(), QStringLiteral("Duplicate 2 elements"));
+        QTest::keyClick(window, Qt::Key_Delete);
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+        QCOMPARE(label(), QStringLiteral("Delete 2 elements"));
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

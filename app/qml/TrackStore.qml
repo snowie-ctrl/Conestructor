@@ -25,12 +25,16 @@ QtObject {
     property string savedText: JSON.stringify(Commands.emptyTrack())
     readonly property bool dirty: trackText !== savedText
 
-    // "" (nothing), an element id, "ruler", "origin" or "direction".
-    property string selectedId: ""
-    readonly property var selectedElement: {
-        const id = selectedId
-        return track.elements.find(e => e.id === id) || null
+    // What is selected: element ids, or one of "ruler", "origin", "direction" on its own.
+    property var selection: []
+    // The one thing selected, or "" when nothing or several are.
+    readonly property string selectedId: selection.length === 1 ? selection[0] : ""
+    readonly property var selectedElements: {
+        const ids = selection
+        return track.elements.filter(e => ids.indexOf(e.id) >= 0)
     }
+    // The one element selected, or null.
+    readonly property var selectedElement: selection.length === 1 && selectedElements.length === 1 ? selectedElements[0] : null
 
     // Elements driven against the rest of their chain: they show a warning (Reverse direction fixes it).
     readonly property var backwardIds: Post.backwards(track.elements)
@@ -55,8 +59,9 @@ QtObject {
 
     function setTrack(t) {
         track = t
-        if (selectedId !== "" && !exists(selectedId))
-            selectedId = ""
+        const kept = selection.filter(id => exists(id))
+        if (kept.length !== selection.length)
+            selection = kept
         syncStack()
         if (previewOn)
             refreshPreview()
@@ -98,7 +103,7 @@ QtObject {
         stack.clear()
         previewOn = false
         preview = null
-        selectedId = ""
+        selection = []
         setTrack(t)
     }
 
@@ -216,11 +221,31 @@ QtObject {
         return track.elements.find(e => e.id === id) || null
     }
 
+    function isSelected(id) {
+        return selection.indexOf(id) >= 0
+    }
+
+    // Selects `id` alone ("" selects nothing).
     function select(id) {
-        if (selectedId === id)
+        const next = id === "" ? [] : [id]
+        if (JSON.stringify(next) === JSON.stringify(selection))
             return
         stack.seal()
-        selectedId = id
+        selection = next
+    }
+
+    // Adds an element to the selection or takes it out (Ctrl+click). A ruler or target selected before is dropped.
+    function toggle(id) {
+        stack.seal()
+        const elementsOnly = selection.filter(s => element(s) !== null)
+        selection = elementsOnly.indexOf(id) >= 0 ? elementsOnly.filter(s => s !== id) : elementsOnly.concat([id])
+    }
+
+    // Selects these elements, or adds them to the elements already selected.
+    function selectMany(ids, add) {
+        stack.seal()
+        const start = add ? selection.filter(s => element(s) !== null) : []
+        selection = start.concat(ids.filter(id => start.indexOf(id) < 0))
     }
 
     function selectLast() {
@@ -230,9 +255,9 @@ QtObject {
     }
 
     function deleteSelected() {
-        const id = selectedId
-        if (id === "")
+        if (selection.length === 0)
             return
+        const id = selectedId
         if (id === "ruler") {
             if (elementCount > 0) {
                 report(qsTr("Delete the track elements before the ruler: their sizes are measured with it."), null)
@@ -242,23 +267,26 @@ QtObject {
         } else if (id === "origin" || id === "direction") {
             run("setTarget", { which: id, point: null })
         } else {
-            run("remove", { id: id })
+            run("removeMany", { ids: selectedElements.map(e => e.id) })
         }
         stack.seal()
     }
 
+    // Copies every selected element (joins between them kept) and selects the copies.
     function duplicateSelected() {
-        if (!selectedElement)
+        const ids = selectedElements.map(e => e.id)
+        if (ids.length === 0)
             return
-        run("duplicate", { id: selectedElement.id })
+        run("duplicateMany", { ids: ids })
         stack.seal()
-        selectLast()
+        selection = track.elements.slice(track.elements.length - ids.length).map(e => e.id)
     }
 
     function reverseSelected() {
-        if (!selectedElement)
+        const ids = selectedElements.map(e => e.id)
+        if (ids.length === 0)
             return
-        run("reverse", { ids: [selectedElement.id] })
+        run("reverse", { ids: ids })
         stack.seal()
     }
 

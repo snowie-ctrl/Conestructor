@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Conestructor
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
+import "logic/selection.mjs" as Selection
 import "logic/snapping.mjs" as Snapping
 import "logic/units.mjs" as Units
 import "logic/viewport.mjs" as Viewport
@@ -35,6 +36,7 @@ Item {
     property string gestureKey: ""
     property string placingKind: ""   // a palette tile being dragged: a track type, "ruler", "origin" or "direction"
     property var ghost: null          // the track element being placed, as it would land
+    property var box: null            // the selection box being dragged, in screen pixels
 
     // The backwards element whose warning is under the cursor ("" when none), for its tip.
     readonly property string hoverWarning: {
@@ -209,7 +211,9 @@ Item {
     function pressAt(e) {
         canvas.forceActiveFocus()
         gestureKey = TrackStore.newGestureKey()
-        press = { sx: e.x, sy: e.y, panX: panX, panY: panY }
+        const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
+        const shift = (e.modifiers & Qt.ShiftModifier) !== 0
+        press = { sx: e.x, sy: e.y, panX: panX, panY: panY, ctrl: ctrl }
         if (e.button === Qt.MiddleButton || (e.button === Qt.LeftButton && spaceHeld)) {
             mode = "pan"
             return
@@ -217,7 +221,8 @@ Item {
         const hit = hitAt(e.x, e.y)
         if (e.button === Qt.RightButton) {
             if (hit && hit.kind === "element") {
-                TrackStore.select(hit.id)
+                if (!TrackStore.isSelected(hit.id))
+                    TrackStore.select(hit.id)
                 elementMenu.popup()
             }
             return
@@ -225,16 +230,30 @@ Item {
         if (e.button !== Qt.LeftButton)
             return
         if (!hit) {
+            if (shift) {
+                press.w = toWorld(e.x, e.y)
+                press.add = ctrl
+                mode = "box"
+                return
+            }
             TrackStore.select("")
             mode = "pan"
             return
         }
         const t = TrackStore.track
         if (hit.kind === "element" || hit.kind === "rotate") {
-            TrackStore.select(hit.id)
+            if (hit.kind === "element" && ctrl) {
+                const removing = TrackStore.isSelected(hit.id)
+                TrackStore.toggle(hit.id)
+                if (removing)
+                    return            // a Ctrl+click that takes an element out starts no drag
+            } else if (!TrackStore.isSelected(hit.id)) {
+                TrackStore.select(hit.id)
+            }
             press.el = TrackStore.element(hit.id)
+            press.group = TrackStore.selectedElements.map(el => JSON.parse(JSON.stringify(el)))
             press.w = toWorld(e.x, e.y)
-            mode = hit.kind === "rotate" ? "rotate" : "move"
+            mode = hit.kind === "rotate" ? "rotate" : press.group.length > 1 ? "moveGroup" : "move"
             return
         }
         if (hit.kind === "rulerA" || hit.kind === "rulerB" || hit.kind === "ruler") {
@@ -268,6 +287,22 @@ Item {
         } else if (mode === "move") {
             const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
             placeDragged(Object.assign({}, press.el, { x: press.el.x + dx * mpp, y: press.el.y + dy * mpp }), ctrl)
+        } else if (mode === "moveGroup") {
+            const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
+            const moved = press.group.map(g => Object.assign({}, g, { x: g.x + dx * mpp, y: g.y + dy * mpp }))
+            let placed = moved
+            let snap = null
+            const found = ctrl ? null : Snapping.findGroupSnap(TrackStore.track.elements, moved, snapMetres())
+            if (found) {
+                placed = Snapping.groupToJoin(moved, found.ownId, found.ownEnd, TrackStore.element(found.targetId),
+                                              found.targetEnd)
+                snap = { ownId: found.ownId, ownEnd: found.ownEnd, id: found.targetId, end: found.targetEnd }
+            }
+            TrackStore.run("placeMany", { moves: placed.map(p => ({ id: p.id, x: p.x, y: p.y, rotation: p.rotation })),
+                                          snap: snap, verb: "Move", mergeKey: gestureKey })
+        } else if (mode === "box") {
+            box = { x: Math.min(press.sx, e.x), y: Math.min(press.sy, e.y),
+                    width: Math.abs(e.x - press.sx), height: Math.abs(e.y - press.sy) }
         } else if (mode === "rotate") {
             const cx = press.el.x / mpp
             const cy = press.el.y / mpp
@@ -290,10 +325,19 @@ Item {
     }
 
     function releaseAt(e) {
-        if (mode !== "" && mode !== "pan")
+        if (mode === "box" && press.dragging && mpp > 0) {
+            const a = press.w
+            const b = toWorld(e.x, e.y)
+            TrackStore.selectMany(Selection.boxHits(TrackStore.track.elements, { x: a.x * mpp, y: a.y * mpp },
+                                                    { x: b.x * mpp, y: b.y * mpp }), press.add)
+        } else if (mode === "moveGroup" && !press.dragging && !press.ctrl) {
+            TrackStore.select(press.el.id)       // a plain click on one of several selects only it
+        }
+        if (mode !== "" && mode !== "pan" && mode !== "box")
             TrackStore.seal()
         mode = ""
         press = null
+        box = null
     }
 
     Keys.onPressed: (e) => {
@@ -338,7 +382,8 @@ Item {
                 required property int index
                 element: TrackStore.track.elements[index] || null
                 zoom: canvas.zoom
-                selected: element !== null && TrackStore.selectedId === element.id
+                selected: element !== null && TrackStore.selection.indexOf(element.id) >= 0
+                single: TrackStore.selection.length === 1
                 dimmed: TrackStore.previewOn
                 backwards: element !== null && TrackStore.backwardIds.indexOf(element.id) >= 0
             }
@@ -357,6 +402,17 @@ Item {
     Item {
         id: overlay
         anchors.fill: parent
+
+        Rectangle {
+            objectName: "selectionBox"
+            visible: canvas.box !== null
+            x: canvas.box ? canvas.box.x : 0
+            y: canvas.box ? canvas.box.y : 0
+            width: canvas.box ? canvas.box.width : 0
+            height: canvas.box ? canvas.box.height : 0
+            color: Qt.rgba(0.18, 0.44, 0.84, 0.15)
+            border.color: "#2f6fd6"
+        }
 
         Label {
             objectName: "warningTip"
@@ -416,7 +472,7 @@ Item {
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
         cursorShape: canvas.mode === "pan" ? Qt.ClosedHandCursor
-                     : canvas.mode === "move" || canvas.mode === "target" ? Qt.SizeAllCursor
+                     : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" ? Qt.SizeAllCursor
                      : Qt.ArrowCursor
         onPressed: (e) => canvas.pressAt(e)
         onPositionChanged: (e) => canvas.moveTo(e)

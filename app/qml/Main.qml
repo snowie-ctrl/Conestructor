@@ -233,18 +233,18 @@ ApplicationWindow {
             Action {
                 text: qsTr("Duplicate")
                 shortcut: "Ctrl+D"
-                enabled: TrackStore.selectedElement !== null
+                enabled: TrackStore.selectedElements.length > 0
                 onTriggered: TrackStore.duplicateSelected()
             }
             Action {
                 text: qsTr("Delete")
                 shortcut: StandardKey.Delete
-                enabled: TrackStore.selectedId !== ""
+                enabled: TrackStore.selection.length > 0
                 onTriggered: TrackStore.deleteSelected()
             }
             Action {
                 text: qsTr("Reverse direction")
-                enabled: TrackStore.selectedElement !== null
+                enabled: TrackStore.selectedElements.length > 0
                 onTriggered: TrackStore.reverseSelected()
             }
             MenuSeparator {}
