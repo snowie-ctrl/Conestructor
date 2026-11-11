@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import Conestructor
 import "logic/units.mjs" as Units
 
-// Edit > Preferences. Part 1 has one section, Units; parts 3 and 4 add Cones, Car and Team.
+// Edit > Preferences. One section so far, Units; parts 4 and 5 add Cones, Car and Team.
 Dialog {
     id: dialog
     title: qsTr("Preferences")

@@ -1,6 +1,6 @@
 // Cone rows along a centreline, ported from the prototype's qml/elements/ConeUtils.js at 2c79b60. Lengths are in
 // any unit; `unitsPerFoot` says how many of that unit make a foot (0.3048 for metres), because the prototype's
-// spacing rules are written in feet. Part 3 replaces these spacing rules with density notches.
+// spacing rules are written in feet. Part 4 adds density notches; this spacing becomes its notch 3, "SAE standard".
 
 // Standing cone pairs along a straight run, both ends included. A run of length 0 still gets one pair.
 export function straightRow(originX, originY, angleRad, length, halfWidth, unitsPerFoot, minSpacingFt, maxSpacingFt) {
