@@ -57,7 +57,7 @@ private slots:
         QCOMPARE(engine.rootObjects().size(), 1);
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.2 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Untitled"));
     }
 
     void theExampleTrackDrawsAndPlacesCones()
