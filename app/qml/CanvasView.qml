@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Conestructor
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
+import "logic/nodes.mjs" as Nodes
 import "logic/selection.mjs" as Selection
 import "logic/snapping.mjs" as Snapping
 import "logic/units.mjs" as Units
@@ -37,6 +38,7 @@ Item {
     property string placingKind: ""   // a palette tile being dragged: a track type, "ruler", "origin" or "direction"
     property var ghost: null          // the track element being placed, as it would land
     property var box: null            // the selection box being dragged, in screen pixels
+    property var hoverNode: null      // the open end under the mouse ({ id, end }), or null
 
     // The backwards element whose warning is under the cursor ("" when none), for its tip.
     readonly property string hoverWarning: {
@@ -118,6 +120,21 @@ Item {
         return Math.hypot(a.x - b.x, a.y - b.y)
     }
 
+    // The open end (a gate node) within 10 screen pixels of photo pixel w, topmost element first, or null.
+    function nodeAt(w) {
+        if (!(mpp > 0))
+            return null
+        const list = TrackStore.track.elements
+        for (let i = list.length - 1; i >= 0; i--) {
+            const el = list[i]
+            const ends = Elements.endsWorld(el)
+            for (const end of ["A", "B"])
+                if (!el.joins[end] && distance({ x: ends[end].x / mpp, y: ends[end].y / mpp }, w) < 10 / zoom)
+                    return { kind: "node", id: el.id, end: end }
+        }
+        return null
+    }
+
     // What is under a screen point, most specific first.
     function hitAt(sx, sy) {
         const w = toWorld(sx, sy)
@@ -140,6 +157,9 @@ Item {
             if (p && distance(p, w) < 16 / zoom)
                 return { kind: "target", which: which }
         }
+        const node = nodeAt(w)
+        if (node)
+            return node
         if (mpp > 0) {
             const id = Elements.hitTest(t.elements, { x: w.x * mpp, y: w.y * mpp }, 4 / zoom * mpp)
             if (id !== "")
@@ -256,6 +276,14 @@ Item {
             return
         }
         const t = TrackStore.track
+        if (hit.kind === "node") {
+            TrackStore.select(hit.id)
+            press.el = JSON.parse(JSON.stringify(TrackStore.element(hit.id)))
+            press.end = hit.end
+            press.pivot = press.el.joins[hit.end === "A" ? "B" : "A"] === null
+            mode = "node"
+            return
+        }
         if (hit.kind === "element" || hit.kind === "rotate") {
             if (hit.kind === "element" && ctrl) {
                 const removing = TrackStore.isSelected(hit.id)
@@ -285,6 +313,8 @@ Item {
 
     function moveTo(e) {
         hover = toWorld(e.x, e.y)
+        if (!mouse.pressed)
+            hoverNode = placingKind === "" ? nodeAt(hover) : null
         if (!mouse.pressed || mode === "")
             return
         // Nothing but a pan moves until the pointer has travelled a drag's distance: a click that wobbles a pixel
@@ -315,6 +345,20 @@ Item {
             }
             TrackStore.run("placeMany", { moves: placed.map(p => ({ id: p.id, x: p.x, y: p.y, rotation: p.rotation })),
                                           snap: snap, verb: "Move", mergeKey: gestureKey })
+        } else if (mode === "node") {
+            const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
+            const shift = (e.modifiers & Qt.ShiftModifier) !== 0
+            const w = toWorld(e.x, e.y)
+            let p = { x: w.x * mpp, y: w.y * mpp }
+            if (press.pivot && !ctrl && !shift) {
+                const s = Nodes.snapPoint(TrackStore.track.elements, press.el.id, p, snapMetres())
+                if (s)
+                    p = s
+            }
+            const r = Nodes.drag(press.el, press.end, p, { pivot: press.pivot, step: shift ? 15 : 0,
+                                                           frameTheta: TrackStore.frame ? TrackStore.frame.theta : 0 })
+            TrackStore.run("stretch", { id: press.el.id, x: r.x, y: r.y, rotation: r.rotation, key: r.key, value: r.value,
+                                        mergeKey: gestureKey })
         } else if (mode === "box") {
             box = { x: Math.min(press.sx, e.x), y: Math.min(press.sy, e.y),
                     width: Math.abs(e.x - press.sx), height: Math.abs(e.y - press.sy) }
@@ -402,6 +446,8 @@ Item {
                 dimmed: TrackStore.previewOn
                 backwards: element !== null && TrackStore.backwardIds.indexOf(element.id) >= 0
                 folded: element !== null && TrackStore.foldedIds.indexOf(element.id) >= 0
+                hoverEnd: element !== null && canvas.hoverNode !== null && canvas.hoverNode.id === element.id
+                          ? canvas.hoverNode.end : ""
             }
         }
         ElementView {
@@ -487,13 +533,17 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-        cursorShape: canvas.mode === "pan" ? Qt.ClosedHandCursor
+        cursorShape: canvas.mode === "node" || (canvas.mode === "" && canvas.hoverNode !== null) ? Qt.CrossCursor
+                     : canvas.mode === "pan" ? Qt.ClosedHandCursor
                      : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" ? Qt.SizeAllCursor
                      : Qt.ArrowCursor
         onPressed: (e) => canvas.pressAt(e)
         onPositionChanged: (e) => canvas.moveTo(e)
         onReleased: (e) => canvas.releaseAt(e)
-        onExited: canvas.hover = null
+        onExited: {
+            canvas.hover = null
+            canvas.hoverNode = null
+        }
         onWheel: (w) => canvas.zoomBy(Math.pow(1.0015, w.angleDelta.y), w.x, w.y)
     }
 

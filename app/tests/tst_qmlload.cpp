@@ -1322,8 +1322,57 @@ private slots:
         const double perMove = double(timer.elapsed()) / moves;
         QTest::mouseRelease(w.window, Qt::LeftButton, {}, a + QPoint(0, 4 * moves));
         qInfo("ms per move on a 40-element course: %.1f", perMove);
-        const double budget = 520;      // twice the 260 ms measured on the owner's machine (debug build), part 3
+        // Twice the slowest time measured on the owner's laptop (debug build): about 1000 ms in its quiet power mode,
+        // 260 ms otherwise. It catches a gross slowdown, not a small one.
+        const double budget = 2000;
         QVERIFY2(perMove < budget, qPrintable(QStringLiteral("%1 ms per move").arg(perMove)));
+    }
+
+    // A joined straight's open end only stretches; a free straight's end swings it about its other end; each drag is
+    // one step; a joined end is not a node.
+    void gateNodesPivotAndStretch()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        const double perPixel = w.mpp() / w.zoom();          // metres per screen pixel
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const double length = e1.value("props").toMap().value("length").toDouble();
+        const double x1 = e1.value("x").toDouble();
+        const double y1 = e1.value("y").toDouble();
+
+        // e1 (the demo's first straight, rotation 0) is joined at B, so its open A end only stretches.
+        const QPointF a = w.screen(x1 - length / 2, y1);
+        QTest::mouseMove(w.window, w.scene(a));
+        QTRY_COMPARE(w.view(QStringLiteral("e1"))->property("hoverEnd").toString(), QStringLiteral("A"));
+        w.drag(a, a + QPointF(-40, 15));
+        QCOMPARE(w.label(), QStringLiteral("Stretch Straight"));
+        const QVariantMap stretched = w.element(QStringLiteral("e1"));
+        QCOMPARE(stretched.value("rotation").toDouble(), 0.0);
+        QVERIFY2(std::abs(stretched.value("props").toMap().value("length").toDouble() - (length + 40 * perPixel)) < 1.5 * perPixel,
+                 qPrintable(QString::number(stretched.value("props").toMap().value("length").toDouble())));
+        QVERIFY(!stretched.value("joins").toMap().value("B").isNull());
+        QMetaObject::invokeMethod(w.store, "undo");
+        QCOMPARE(w.element(QStringLiteral("e1")).value("props").toMap().value("length").toDouble(), length);
+
+        // A free straight pivots about its other end.
+        w.run(QStringLiteral("add"), { { "type", "straight" }, { "x", x1 }, { "y", y1 + 20 } });
+        const QPointF freeA = w.screen(x1 - 10, y1 + 20);
+        const QPointF freeB = w.screen(x1 + 10, y1 + 20);
+        w.drag(freeB, freeA + QPointF(0, 60));
+        QCOMPARE(w.label(), QStringLiteral("Stretch Straight"));
+        const QVariantMap swung = w.element(QStringLiteral("e5"));
+        QVERIFY2(std::abs(swung.value("rotation").toDouble() - 90) < 2, qPrintable(QString::number(swung.value("rotation").toDouble())));
+        QVERIFY(std::abs(swung.value("props").toMap().value("length").toDouble() - 60 * perPixel) < 1.5 * perPixel);
+        // Its A end has not moved.
+        const double r = swung.value("rotation").toDouble() * M_PI / 180;
+        const double half = swung.value("props").toMap().value("length").toDouble() / 2;
+        QVERIFY(std::abs(swung.value("x").toDouble() - half * std::cos(r) - (x1 - 10)) < 1e-6);
+        QVERIFY(std::abs(swung.value("y").toDouble() - half * std::sin(r) - (y1 + 20)) < 1e-6);
+
+        // The joint between e1 and e2 is not a node: pressing there grabs the element, not a stretch.
+        const QPointF joint = w.screen(x1 + length / 2, y1);
+        w.drag(joint, joint + QPointF(0, 40));
+        QVERIFY2(!w.label().startsWith(QStringLiteral("Stretch")), qPrintable(w.label()));
     }
 };
 
