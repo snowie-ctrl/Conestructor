@@ -6,6 +6,7 @@ import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
 import "logic/nodes.mjs" as Nodes
 import "logic/selection.mjs" as Selection
+import "logic/setup.mjs" as Setup
 import "logic/snapping.mjs" as Snapping
 import "logic/units.mjs" as Units
 import "logic/viewport.mjs" as Viewport
@@ -42,6 +43,18 @@ Item {
     property var placingPoint: null   // the photo pixel under the mouse while placing the ruler or a target
     property var rulerFirst: null     // the ruler's first end, once clicked
     property bool lengthBoxOpen: false
+    // A track piece in hand is dropped when setup comes undone (the track tiles lock again).
+    readonly property bool setupDone: Setup.status(TrackStore.track).done
+    onSetupDoneChanged: if (!setupDone && Elements.TYPES.indexOf(placingKind) >= 0) cancelPlacing()
+
+    // A tile in hand, a ruler's first click or the length box belong to the track they were started on.
+    Connections {
+        target: TrackStore
+        function onTrackReplaced() {
+            canvas.cancelPlacing()
+            canvas.lengthBoxOpen = false
+        }
+    }
     // The ruler as it would land: between the first click and the mouse, or (dragged) 160 screen pixels centred there.
     readonly property var rulerGhost: {
         const p = placingPoint
@@ -352,7 +365,10 @@ Item {
             mode = "pan"
             return
         }
-        const hit = hitAt(e.x, e.y)
+        let hit = hitAt(e.x, e.y)
+        // An open end is a gate node only for a plain left press: right-click and Ctrl+click act on its element.
+        if (hit && hit.kind === "node" && (e.button !== Qt.LeftButton || (e.modifiers & Qt.ControlModifier) !== 0))
+            hit = { kind: "element", id: hit.id }
         if (e.button === Qt.RightButton) {
             if (hit && hit.kind === "element") {
                 if (!TrackStore.isSelected(hit.id))
@@ -696,6 +712,7 @@ Item {
 
     Menu {
         id: elementMenu
+        objectName: "elementMenu"
         MenuItem { text: qsTr("Duplicate"); onTriggered: TrackStore.duplicateSelected() }
         MenuItem { text: qsTr("Delete"); onTriggered: TrackStore.deleteSelected() }
         MenuItem { text: qsTr("Reverse direction"); onTriggered: TrackStore.reverseSelected() }

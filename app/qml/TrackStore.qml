@@ -59,6 +59,8 @@ QtObject {
     // Something the person needs to fix; `target` says what "Show me" pans to ({ kind, id? }) or is null.
     signal problem(string message, var target)
     signal problemsCleared()
+    // A different track took this one's place (New, Open, Restore, the demo): anything half-done on the canvas stops.
+    signal trackReplaced()
 
     function setTrack(t) {
         track = t
@@ -117,6 +119,7 @@ QtObject {
         preview = null
         selection = []
         setTrack(t)
+        trackReplaced()
     }
 
     function markSaved() {

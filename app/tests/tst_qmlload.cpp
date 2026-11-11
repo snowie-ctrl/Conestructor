@@ -1660,6 +1660,65 @@ private slots:
         QVERIFY(found.isEmpty());
         QCOMPARE(w.store->property("elementCount").toInt(), 0);
     }
+
+    // Final review: a picked-up tile is dropped when the track is replaced or setup comes undone.
+    void placingStopsWhenTheTrackChanges()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        w.clickItem(w.tile(QStringLiteral("ruler")));
+        w.click({ 300, 400 });                                       // the ruler's first end
+        QVERIFY(!isNull(w.canvas->property("rulerFirst")));
+        QMetaObject::invokeMethod(w.store, "newTrack");
+        QCOMPARE(w.canvas->property("placingBy").toString(), QString());
+        QVERIFY(isNull(w.canvas->property("rulerFirst")));
+
+        QMetaObject::invokeMethod(w.window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        w.clickItem(w.tile(QStringLiteral("straight")));
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("straight"));
+        w.run(QStringLiteral("setTarget"), { { "which", "direction" }, { "point", QVariant() } });   // setup undone
+        QCOMPARE(w.canvas->property("placingBy").toString(), QString());
+    }
+
+    // Final review: an element both backwards and folded lists both, one plain line each.
+    void aWarningCanSayTwoThings()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.store, "select", Q_ARG(QVariant, QStringLiteral("e3")));
+        QMetaObject::invokeMethod(w.store, "reverseSelected");
+        w.run(QStringLiteral("setProp"), { { "id", "e3" }, { "key", "radius" }, { "value", 1.0 } });
+        QVariant text;
+        QMetaObject::invokeMethod(w.canvas, "warningText", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, QStringLiteral("e3")));
+        QVERIFY2(!text.toString().contains(QChar('\r')), qPrintable(text.toString()));
+        const QStringList lines = text.toString().split(QChar('\n'));
+        QCOMPARE(lines.size(), 2);
+        QVERIFY(lines[0].startsWith(QStringLiteral("Runs against the track")));
+        QVERIFY(lines[1].startsWith(QStringLiteral("Folds in on itself")));
+    }
+
+    // Final review: right-click and Ctrl+click near an open end still act on the element, as before gate nodes.
+    void openEndsStillTakeRightAndCtrlClicks()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const double length = e1.value("props").toMap().value("length").toDouble();
+        const double x1 = e1.value("x").toDouble();
+        const double y1 = e1.value("y").toDouble();
+        w.click(w.screen(x1 - length / 2, y1), Qt::RightButton);    // e1's open A end
+        QObject *menu = w.window->findChild<QObject *>(QStringLiteral("elementMenu"));
+        QVERIFY(menu);
+        QTRY_VERIFY(menu->property("opened").toBool());
+        QCOMPARE(w.store->property("selectedId").toString(), QStringLiteral("e1"));
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->property("opened").toBool());
+
+        w.run(QStringLiteral("add"), { { "type", "straight" }, { "x", x1 }, { "y", y1 + 20 } });   // e5, free
+        QTest::mouseClick(w.window, Qt::LeftButton, Qt::ControlModifier, w.scene(w.screen(x1 - 10, y1 + 20)));
+        QCOMPARE(plain(w.store->property("selection")).toStringList(), QStringList({ QStringLiteral("e1"), QStringLiteral("e5") }));
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)
