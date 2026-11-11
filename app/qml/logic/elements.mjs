@@ -223,14 +223,16 @@ function turn(p) {
     const steps = Math.max(6, Math.round(Math.abs(p.angle) * TURN_SAMPLES_PER_DEGREE))
     const dTheta = p.angle / steps
 
-    // The arc from the end of the lead-in, in the entry frame (start at 0, 0 heading +x), stepped as the prototype did.
+    // The arc from the end of the lead-in, in the entry frame (start at 0, 0 heading +x). Each step runs along the
+    // heading at its middle, so the steps are chords of the true arc and the turn driven backwards retraces it exactly
+    // (the prototype used the heading at the start of each step).
     const arc = [{ x: p.leadIn, y: 0, heading: 0 }]
     let x = p.leadIn
     let y = 0
     let heading = 0
     for (let i = 0; i < steps; i++) {
         const ds = radiusAt(p, (i + 0.5) * dTheta) * (dTheta * Math.PI / 180)
-        const h = heading * Math.PI / 180
+        const h = (heading + turnSign * dTheta / 2) * Math.PI / 180
         x += ds * Math.cos(h)
         y += ds * Math.sin(h)
         heading += turnSign * dTheta
@@ -368,4 +370,83 @@ export function bandPolygon(path, halfWidth) {
         right.push({ x: path[i].x - nx * halfWidth, y: path[i].y - ny * halfWidth })
     }
     return left.concat(right.reverse())
+}
+
+// ---- Driving an element the other way ----
+
+const OTHER_SIDE = { left: "right", right: "left" }
+
+// The settings that describe the same element driven exit to entry: leads swap; a turn bends the other way and its
+// radii swap; a slalom with an odd number of cones weaves first to the other side; a chicane keeps its direction.
+export function reversedProps(type, props) {
+    const q = Object.assign({}, props)
+    if ("leadIn" in props) {
+        q.leadIn = props.leadOut
+        q.leadOut = props.leadIn
+    }
+    if (type === "turn") {
+        q.direction = OTHER_SIDE[props.direction]
+        if (props.radiusType === "changing") {
+            q.radius = props.exitRadius
+            q.exitRadius = props.radius
+        }
+    } else if (type === "slalom" && props.coneCount % 2 === 1) {
+        q.firstTurn = OTHER_SIDE[props.firstTurn]
+    }
+    return q
+}
+
+// The element driven the other way: { x, y, rotation, props } that put its new entry (end A) where its exit was,
+// facing the same way, so the centreline and both ends stay where they were.
+export function reversed(el) {
+    const props = reversedProps(el.type, el.props)
+    const exit = endsWorld(el).B
+    const entry = geometry(el.type, props).ends.A
+    const rotation = normalizeAngle(exit.heading - entry.heading)
+    const at = toWorld({ x: 0, y: 0, rotation: rotation }, entry)
+    return { x: exit.x - at.x, y: exit.y - at.y, rotation: rotation, props: props }
+}
+
+// ---- Along the centreline ----
+
+function lengthsAlong(path) {
+    const lengths = [0]
+    for (let i = 1; i < path.length; i++)
+        lengths.push(lengths[i - 1] + Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y))
+    return lengths
+}
+
+export function pathLength(el) {
+    const lengths = lengthsAlong(pathWorld(el))
+    return lengths[lengths.length - 1]
+}
+
+// Points at these fractions (0 to 1) of the way along the centreline from entry to exit, in canvas metres, each with
+// the centreline's heading there (degrees clockwise on screen). Pieces of no length (an empty lead) are skipped.
+export function pointsAlong(el, fractions) {
+    const path = pathWorld(el)
+    const lengths = lengthsAlong(path)
+    const total = lengths[lengths.length - 1]
+    return fractions.map(f => {
+        const want = Math.max(0, Math.min(1, f)) * total
+        let i = 1
+        while (i < path.length - 1 && (lengths[i] < want || lengths[i] === lengths[i - 1]))
+            i++
+        const a = path[i - 1]
+        const b = path[i]
+        const span = lengths[i] - lengths[i - 1]
+        const t = span > 0 ? Math.max(0, Math.min(1, (want - lengths[i - 1]) / span)) : 0
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t,
+                 heading: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI }
+    })
+}
+
+// Where the direction-of-travel arrows go: about one every `spacing` metres and at least two, each in the middle of
+// an equal piece of the centreline.
+export function arrowMarks(el, spacing) {
+    const n = Math.max(2, Math.round(pathLength(el) / spacing))
+    const fractions = []
+    for (let i = 0; i < n; i++)
+        fractions.push((i + 0.5) / n)
+    return pointsAlong(el, fractions)
 }
