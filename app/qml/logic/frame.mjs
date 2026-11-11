@@ -41,3 +41,8 @@ export function fromFrame(frame, q) {
 export function headingToFrame(frame, heading) {
     return normalize(frame.theta - heading)
 }
+
+// An export heading (counter-clockwise from +x) as a canvas heading (clockwise on screen).
+export function headingFromFrame(frame, heading) {
+    return normalize(frame.theta - heading)
+}

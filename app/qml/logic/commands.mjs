@@ -121,6 +121,29 @@ const COMMANDS = {
                           rotation: source.rotation, props: Object.assign({}, source.props), joins: { A: null, B: null } })
         t.nextId += 1
         return t
+    },
+    // Drives each element the other way, in place: same footprint, entry and exit swapped, joins kept.
+    reverse(t, a) {
+        for (const id of a.ids) {
+            const el = find(t, id)
+            Object.assign(el, Elements.reversed(el))
+            el.joins = { A: el.joins.B, B: el.joins.A }
+            for (const end of ["A", "B"]) {
+                const mate = el.joins[end]
+                if (mate)
+                    find(t, mate.id).joins[mate.end] = { id: el.id, end: end }
+            }
+        }
+        return t
+    },
+    // A typed rotation: the element's whole joined chain turns about the element's middle and stays joined.
+    rotateChain(t, a) {
+        const el = find(t, a.id)
+        const rotation = Elements.normalizeAngle(a.rotation)
+        const turn = Elements.normalizeAngle(rotation - el.rotation)
+        Snapping.turnAbout(t.elements, Snapping.chainOf(t.elements, el.id), { x: el.x, y: el.y }, turn)
+        el.rotation = rotation
+        return t
     }
 }
 
@@ -150,6 +173,8 @@ export function label(track, name, a) {
     }
     case "remove": return "Delete " + named(a.id)
     case "duplicate": return "Duplicate " + named(a.id)
+    case "reverse": return "Reverse " + (a.ids.length === 1 ? named(a.ids[0]) : a.ids.length + " elements")
+    case "rotateChain": return "Rotate " + named(a.id)
     }
     return name
 }

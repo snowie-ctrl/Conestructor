@@ -46,7 +46,10 @@ TestCase {
             { tag: "change a turn's radius", name: "setProp", args: { id: "e2", key: "radius", value: 9 } },
             { tag: "change a straight's length", name: "setProp", args: { id: "e1", key: "length", value: 30 } },
             { tag: "delete the middle element", name: "remove", args: { id: "e2" } },
-            { tag: "duplicate", name: "duplicate", args: { id: "e1" } }
+            { tag: "duplicate", name: "duplicate", args: { id: "e1" } },
+            { tag: "reverse the turn", name: "reverse", args: { ids: ["e2"] } },
+            { tag: "reverse two", name: "reverse", args: { ids: ["e1", "e2"] } },
+            { tag: "type a rotation", name: "rotateChain", args: { id: "e1", rotation: 90 } }
         ]
     }
 
@@ -76,6 +79,9 @@ TestCase {
             ["duplicate", { id: "e1" }, "Duplicate Straight"],
             ["remove", { id: "e3" }, "Delete Straight"],
             ["setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 11 }, "Set ruler"],
+            ["reverse", { ids: ["e2"] }, "Reverse Turn"],
+            ["reverse", { ids: ["e1", "e2"] }, "Reverse 2 elements"],
+            ["rotateChain", { id: "e1", rotation: 45 }, "Rotate Straight"],
             ["setPhoto", { kind: "image", ref: 1 }, "Load photo"],
             ["setPhoto", { kind: "blueprint" }, "Use blueprint"],
             ["newTrack", {}, "New track"]
@@ -272,5 +278,101 @@ TestCase {
         compare(t.photo.metresPerPixel, 0)
         t = Commands.run(s, t, "removeRuler", {})
         compare(t.ruler, null)
+    }
+
+    function meets(track, aId, aEnd, bId, bEnd) {
+        const pa = Elements.endsWorld(byId(track, aId))[aEnd]
+        const pb = Elements.endsWorld(byId(track, bId))[bEnd]
+        return Math.hypot(pa.x - pb.x, pa.y - pb.y) < 1e-6
+    }
+
+    // Every join is mutual and its ends meet; returns how many ends are joined.
+    function allJoinsHold(t) {
+        let n = 0
+        for (const el of t.elements)
+            for (const end of ["A", "B"]) {
+                const mate = el.joins[end]
+                if (!mate)
+                    continue
+                n += 1
+                compare(byId(t, mate.id).joins[mate.end].id, el.id, el.id + "." + end + " is joined back")
+                verify(meets(t, el.id, end, mate.id, mate.end), el.id + "." + end + " meets its mate")
+            }
+        return n
+    }
+
+    // Four quarter turns joined into a closed ring.
+    function ring() {
+        const turn = { angle: 90, radius: 6, leadIn: 0, leadOut: 0 }
+        const s = new Commands.UndoStack()
+        let t = Commands.run(s, Commands.emptyTrack(), "setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 10 })
+        t = Commands.run(s, t, "add", { type: "turn", x: 20, y: 20, props: turn })
+        for (const id of ["e1", "e2", "e3"])
+            t = Commands.run(s, t, "add", { type: "turn", x: 0, y: 0, props: turn, snap: { ownEnd: "A", id: id, end: "B" } })
+        const e1 = byId(t, "e1")
+        return Commands.run(s, t, "place", { id: "e1", x: e1.x, y: e1.y, rotation: e1.rotation,
+                                             snap: { ownEnd: "A", id: "e4", end: "B" } })
+    }
+
+    function test_reversingKeepsTheChainJoined() {
+        const t0 = base()
+        const t = Commands.run(new Commands.UndoStack(), t0, "reverse", { ids: ["e2"] })
+        const e2 = byId(t, "e2")
+        compare(e2.props.direction, "left")
+        compare(e2.joins.A.id, "e3")
+        compare(e2.joins.B.id, "e1")
+        compare(JSON.stringify(byId(t, "e1").joins.B), JSON.stringify({ id: "e2", end: "B" }))
+        compare(JSON.stringify(byId(t, "e3").joins.A), JSON.stringify({ id: "e2", end: "A" }))
+        compare(allJoinsHold(t), 4)
+        for (const id of ["e1", "e3"]) {
+            compare(byId(t, id).x, byId(t0, id).x)
+            compare(byId(t, id).y, byId(t0, id).y)
+            compare(byId(t, id).rotation, byId(t0, id).rotation)
+        }
+    }
+
+    function test_reversingTwiceIsWhereYouStarted() {
+        const t0 = base()
+        const s = new Commands.UndoStack()
+        const t = Commands.run(s, Commands.run(s, t0, "reverse", { ids: ["e2"] }), "reverse", { ids: ["e2"] })
+        const a = byId(t0, "e2")
+        const b = byId(t, "e2")
+        compare(JSON.stringify(b.props), JSON.stringify(a.props))
+        compare(JSON.stringify(b.joins), JSON.stringify(a.joins))
+        verify(Math.abs(b.x - a.x) < 1e-9 && Math.abs(b.y - a.y) < 1e-9, "same place")
+        verify(Math.abs(Elements.normalizeAngle(b.rotation - a.rotation)) < 1e-9, "same rotation")
+    }
+
+    function test_reversingInsideAClosedLoopKeepsItClosed() {
+        const t0 = ring()
+        const stack = new Commands.UndoStack()
+        const t = Commands.run(stack, t0, "reverse", { ids: ["e2"] })
+        compare(allJoinsHold(t), 8)
+        compare(JSON.stringify(stack.undo()), JSON.stringify(t0))
+    }
+
+    function test_typingARotationTurnsTheWholeChain() {
+        const t0 = base()
+        const t = Commands.run(new Commands.UndoStack(), t0, "rotateChain", { id: "e1", rotation: 90 })
+        compare(byId(t, "e1").rotation, 90)
+        compare(byId(t, "e1").x, byId(t0, "e1").x)
+        compare(byId(t, "e1").y, byId(t0, "e1").y)
+        compare(allJoinsHold(t), 4)
+        verify(Math.abs(Elements.normalizeAngle(byId(t, "e3").rotation - byId(t0, "e3").rotation - 90)) < 1e-9,
+               "the far end turned too")
+    }
+
+    function test_anUnjoinedElementTurnsAlone() {
+        const s = new Commands.UndoStack()
+        const t0 = Commands.run(s, base(), "add", { type: "slalom", x: 40, y: 40 })
+        const t = Commands.run(s, t0, "rotateChain", { id: "e4", rotation: -30 })
+        compare(byId(t, "e4").rotation, -30)
+        for (const id of ["e1", "e2", "e3"])
+            compare(JSON.stringify(byId(t, id)), JSON.stringify(byId(t0, id)))
+    }
+
+    function test_aTypedRotationWraps() {
+        const t = Commands.run(new Commands.UndoStack(), base(), "rotateChain", { id: "e1", rotation: 270 })
+        compare(byId(t, "e1").rotation, -90)
     }
 }

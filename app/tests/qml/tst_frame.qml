@@ -61,4 +61,11 @@ TestCase {
         compare(Frame.normalize(540), 180)
         compare(Frame.normalize(0), 0)
     }
+
+    function test_headingFromFrameUndoesHeadingToFrame() {
+        const f = Frame.makeFrame({ x: 37, y: 120 }, { x: 410, y: -55 }, 0.073)
+        for (const h of [0, 33, -90, 179, -150])
+            verify(Math.abs(Frame.normalize(Frame.headingFromFrame(f, Frame.headingToFrame(f, h)) - h)) < 1e-9, "heading " + h)
+        compare(Frame.headingFromFrame(upFrame(), 0), -90)
+    }
 }

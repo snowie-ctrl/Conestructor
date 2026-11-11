@@ -173,3 +173,32 @@ export function unjoinApart(elements) {
         }
     }
 }
+
+// Every element joined to `id`, directly or through others; `id` first.
+export function chainOf(elements, id) {
+    const out = [id]
+    for (let i = 0; i < out.length; i++) {
+        const el = byId(elements, out[i])
+        for (const end of ["A", "B"]) {
+            const mate = el.joins[end]
+            if (mate && out.indexOf(mate.id) < 0)
+                out.push(mate.id)
+        }
+    }
+    return out
+}
+
+// Turns elements `ids` as one about `pivot` (canvas metres) by `degrees` (clockwise on screen). Changes them.
+export function turnAbout(elements, ids, pivot, degrees) {
+    const r = degrees * Math.PI / 180
+    const c = Math.cos(r)
+    const s = Math.sin(r)
+    for (const id of ids) {
+        const el = byId(elements, id)
+        const dx = el.x - pivot.x
+        const dy = el.y - pivot.y
+        el.x = pivot.x + dx * c - dy * s
+        el.y = pivot.y + dx * s + dy * c
+        el.rotation = Elements.normalizeAngle(el.rotation + degrees)
+    }
+}
