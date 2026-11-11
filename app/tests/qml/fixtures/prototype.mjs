@@ -2,7 +2,8 @@
 // Conestructor/qml/elements/ConeUtils.js, Straight.qml, Slalom.qml, Chicane.qml, Hairpin.qml and PostProcessor.qml:
 // QML property reads became reads from a plain element object `el` (prototype property names), Qt.point became
 // {x, y}, the duplicated ConeUtils functions appear once, and nothing else changed. Pixels and feet, y down the
-// screen, headings clockwise. Do not fix anything here: this is what the new code is compared against.
+// screen, headings clockwise. Do not fix anything here: this is what the new code is compared against. The one
+// exception is marked OWNER'S CORRECTION (the slalom pointer cones).
 
 // ---- ConeUtils.js ----
 
@@ -242,11 +243,14 @@ function slalomCones(el, pixelsPerFoot) {
     for (var i = 0; i < el.numSlaloms; i++) {
         var apexX = el.leadInLength + (i + 1) * el.slalomOffset - width / 2
         var apexY = sign * el.apexOffset
-        var leanY = apexY + sign * leaningOffsetPx
+        // OWNER'S CORRECTION, the one deliberate change from the prototype (after the part 1 check, 2026-11-10): the
+        // pointer lies on the centreline side of the apex cone, still pointing at it. The prototype had
+        // `apexY + sign * leaningOffsetPx` here and `Math.atan2(-sign, 0)` below.
+        var leanY = apexY - sign * leaningOffsetPx
 
         cones.push({ x: apexX, y: apexY, heading: 0, coneType: "standing" })
 
-        var headingDeg = Math.atan2(-sign, 0) * 180 / Math.PI
+        var headingDeg = Math.atan2(sign, 0) * 180 / Math.PI
         cones.push({ x: apexX, y: leanY, heading: headingDeg, coneType: "leaning" })
 
         sign = -sign

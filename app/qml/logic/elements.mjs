@@ -144,7 +144,7 @@ function slalom(p) {
         }
     }
 
-    // Cones: lead-in pairs, a standing cone at each apex with a leaning cone just outside it, lead-out pairs.
+    // Cones: lead-in pairs, a standing cone at each apex with a pointer cone just inside it, lead-out pairs.
     const halfWidth = p.trackWidth / 2
     const lean = LEAN_OFFSET_FT * FOOT
     let cones = Rows.straightRow(-half, 0, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT)
@@ -153,7 +153,9 @@ function slalom(p) {
         const apexX = p.leadIn + (i + 1) * p.coneSpacing - half
         const apexY = sign * p.weaveOffset
         cones.push({ x: apexX, y: apexY, heading: 0, type: "standing" })
-        cones.push({ x: apexX, y: apexY + sign * lean, heading: Math.atan2(-sign, 0) * 180 / Math.PI, type: "leaning" })
+        // The pointer lies on the centreline side of the apex cone, pointing at it (the owner's correction after the
+        // part 1 check; the prototype put it on the outside).
+        cones.push({ x: apexX, y: apexY - sign * lean, heading: Math.atan2(sign, 0) * 180 / Math.PI, type: "leaning" })
         sign = -sign
     }
     cones = cones.concat(Rows.straightRow(weaveEnd, 0, 0, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT))

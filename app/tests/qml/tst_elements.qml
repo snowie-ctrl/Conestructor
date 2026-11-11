@@ -107,6 +107,25 @@ TestCase {
         compare(cones.filter(c => c.type === "leaning").length, 4)
     }
 
+    // Each pointer (leaning) cone lies on the centreline side of its apex cone, pointing at it.
+    function test_slalomPointersLieInsideTheirApexCones() {
+        for (const firstTurn of ["left", "right"]) {
+            const cones = Elements.geometry("slalom", Object.assign(Elements.defaults("slalom"), { firstTurn: firstTurn })).cones
+            const standing = cones.filter(c => c.type === "standing" && Math.abs(c.y) > 1e-9 && Math.abs(Math.abs(c.y) - 2) > 1e-9)
+            const leaning = cones.filter(c => c.type === "leaning")
+            compare(leaning.length, 4)
+            compare(standing.length, 4)
+            for (let i = 0; i < 4; i++) {
+                const apex = standing[i]
+                const pointer = leaning[i]
+                compare(pointer.x, apex.x)
+                verify(Math.abs(pointer.y) < Math.abs(apex.y), firstTurn + " " + i + ": pointer nearer the centreline")
+                const towardApex = Math.atan2(apex.y - pointer.y, apex.x - pointer.x) * 180 / Math.PI
+                verify(Math.abs(pointer.heading - towardApex) < 1e-9, firstTurn + " " + i + ": heading " + pointer.heading)
+            }
+        }
+    }
+
     function test_endsInTheWorld() {
         const e = Elements.endsWorld(el("a", "straight", {}, 5, 5, 90))
         near(e.A.x, 5, 1e-9, "A x")
