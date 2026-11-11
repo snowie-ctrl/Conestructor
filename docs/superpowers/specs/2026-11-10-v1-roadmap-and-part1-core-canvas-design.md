@@ -40,9 +40,16 @@ Each part gets its own spec, plan and build, in its own session, on its own bran
    plain-word properties, Preferences (units), rotate, delete, duplicate, undo, working view toggles, on-screen errors,
    housekeeping, licence.
 2. **Setup and track files.** The setup checklist; `.cone` save and open (photo embedded); `docs/cone-format.md` and
-   the schema; unsaved-changes warning; window title with the track name; the JSON export replaced by `.cone`.
+   the schema; unsaved-changes warning; window title with the track name; the JSON export replaced by `.cone`. From
+   the owner's part 1 check: arrows through each element showing the direction of travel; an element's rotation
+   typed in the panel; Ctrl+click to select several elements, with the panel showing and changing the settings they
+   share (track width, for example). The `.cone` format leaves room for part 3's hand-edited cones.
 3. **Cones.** Density notches and per-element overrides, outside cones on turns, the cone budget, spacing checked
    against the rulebook, rule warnings (advice only, a small ⚠ on the element), the car outline and the Tools menu.
+   From the owner's part 1 check: turns from 0° to 360° (one element for a full circle, so a skidpad figure 8 is
+   two turns); a line tool for straight rows of cones (boundaries and walls); after Place cones, deleting single cones
+   and changing a cone's type and pointing direction, which re-processing replaces; the cone count shown as n/m
+   against the cones the team owns (Preferences), red when over.
 4. **Team server.** `server/` in the repo (moved from `coneRoutes.py`): multi-team tables, team keys, HTTP upload of a
    `.cone` file with a small thumbnail, a team track list and download; nginx for the subdomain passing only
    `/api/cone/`; a LAN-only admin prefix for deleting tracks and adding team keys; Preferences › Team (team code);
