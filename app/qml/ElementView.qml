@@ -1,11 +1,13 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Shapes
 import Conestructor
 import "logic/elements.mjs" as Elements
 
 // One track element drawn from data, in photo pixels: a translucent band in its colour as wide as the track, a
-// dashed centreline, a ring at each open end and a green dot at each joined end. Selected: a white outline and the
-// rotate handle. Draws only; CanvasView handles every click and drag.
+// dashed centreline, a ring at each open end, a green dot at each joined end, and white arrows along the centreline
+// pointing the way it is driven (entry to exit). An element driven against its chain shows a warning sign. Selected: a
+// white outline and the rotate handle. Draws only; CanvasView handles every click and drag.
 Item {
     id: view
 
@@ -13,6 +15,7 @@ Item {
     property real zoom: 1
     property bool selected: false
     property bool dimmed: false
+    property bool backwards: false
 
     readonly property real mpp: TrackStore.mpp
     readonly property bool drawable: element !== null && mpp > 0
@@ -26,6 +29,9 @@ Item {
                      .map(p => Qt.point(p.x / mpp, p.y / mpp))
         return ring.length > 0 ? ring.concat([ring[0]]) : ring
     }
+    readonly property var arrows: drawable ? Elements.arrowMarks(element, 8) : []
+    // The middle of the centreline (canvas metres), where the warning sits.
+    readonly property var middle: drawable ? Elements.pointsAlong(element, [0.5])[0] : null
     readonly property var handle: drawable && selected ? Elements.rotateHandle(element, 24 / zoom * mpp) : null
 
     visible: drawable
@@ -62,6 +68,42 @@ Item {
                 y: view.handle ? view.handle.y / view.mpp : 0
             }
         }
+    }
+
+    // Arrows: chevrons a fixed size on screen, pointing along the centreline.
+    Repeater {
+        model: view.arrows
+        Shape {
+            required property var modelData
+            x: modelData.x / view.mpp
+            y: modelData.y / view.mpp
+            rotation: modelData.heading
+            scale: 1 / view.zoom
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: "#ffffff"
+                strokeWidth: 2
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                joinStyle: ShapePath.RoundJoin
+                startX: -4
+                startY: -6
+                PathLine { x: 4; y: 0 }
+                PathLine { x: -4; y: 6 }
+            }
+        }
+    }
+
+    Label {
+        visible: view.backwards && view.middle !== null
+        text: "⚠"
+        color: "#ffb300"
+        font.pixelSize: 20
+        style: Text.Outline
+        styleColor: "#000000"
+        scale: 1 / view.zoom
+        x: view.middle ? view.middle.x / view.mpp - width / 2 : 0
+        y: view.middle ? view.middle.y / view.mpp - height / 2 : 0
     }
 
     Repeater {

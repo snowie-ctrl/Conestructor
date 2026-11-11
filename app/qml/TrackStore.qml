@@ -32,6 +32,9 @@ QtObject {
         return track.elements.find(e => e.id === id) || null
     }
 
+    // Elements driven against the rest of their chain: they show a warning (Reverse direction fixes it).
+    readonly property var backwardIds: Post.backwards(track.elements)
+
     property string message: ""
     property bool previewOn: false
     property var preview: null
@@ -250,6 +253,13 @@ QtObject {
         run("duplicate", { id: selectedElement.id })
         stack.seal()
         selectLast()
+    }
+
+    function reverseSelected() {
+        if (!selectedElement)
+            return
+        run("reverse", { ids: [selectedElement.id] })
+        stack.seal()
     }
 
     function report(text, target) {

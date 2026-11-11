@@ -14,6 +14,8 @@ ColumnLayout {
     required property var def
     required property var value
     property bool emptyWhenZero: false
+    property real stepSize: 0       // what the arrows step by; 0 means the unit's usual step
+    property real bigStep: 0        // what Shift+arrow steps by; 0 means the same as the arrows
     signal edited(var newValue)
     signal finished()
 
@@ -55,8 +57,9 @@ ColumnLayout {
             apply(parsed)
     }
 
-    function step(direction) {
-        const stored = apply(Number(value) + direction * Units.stepFor(def.kind, unit))
+    function step(direction, big) {
+        const size = big && bigStep > 0 ? bigStep : stepSize > 0 ? stepSize : Units.stepFor(def.kind, unit)
+        const stored = apply(Number(value) + direction * size)
         input.text = Units.formatValue(def.kind, stored, unit)
         bad = false
     }
@@ -115,8 +118,8 @@ ColumnLayout {
                 field.note = ""
                 text = field.shown()
             }
-            Keys.onUpPressed: field.step(1)
-            Keys.onDownPressed: field.step(-1)
+            Keys.onUpPressed: (e) => field.step(1, (e.modifiers & Qt.ShiftModifier) !== 0)
+            Keys.onDownPressed: (e) => field.step(-1, (e.modifiers & Qt.ShiftModifier) !== 0)
         }
 
         ColumnLayout {
@@ -127,14 +130,14 @@ ColumnLayout {
                 font.pixelSize: 9
                 implicitHeight: 15
                 focusPolicy: Qt.NoFocus
-                onClicked: { field.step(1); field.finished() }
+                onClicked: { field.step(1, false); field.finished() }
             }
             ToolButton {
                 text: "▼"
                 font.pixelSize: 9
                 implicitHeight: 15
                 focusPolicy: Qt.NoFocus
-                onClicked: { field.step(-1); field.finished() }
+                onClicked: { field.step(-1, false); field.finished() }
             }
         }
     }

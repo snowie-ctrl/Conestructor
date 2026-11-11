@@ -242,6 +242,11 @@ ApplicationWindow {
                 enabled: TrackStore.selectedId !== ""
                 onTriggered: TrackStore.deleteSelected()
             }
+            Action {
+                text: qsTr("Reverse direction")
+                enabled: TrackStore.selectedElement !== null
+                onTriggered: TrackStore.reverseSelected()
+            }
             MenuSeparator {}
             Action { text: qsTr("Preferences…"); shortcut: "Ctrl+,"; onTriggered: preferences.open() }
         }

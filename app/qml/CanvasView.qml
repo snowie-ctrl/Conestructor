@@ -36,6 +36,23 @@ Item {
     property string placingKind: ""   // a palette tile being dragged: a track type, "ruler", "origin" or "direction"
     property var ghost: null          // the track element being placed, as it would land
 
+    // The backwards element whose warning is under the cursor ("" when none), for its tip.
+    readonly property string hoverWarning: {
+        if (!hover || !(mpp > 0))
+            return ""
+        const h = toScreen(hover.x, hover.y)
+        for (const id of TrackStore.backwardIds) {
+            const el = TrackStore.element(id)
+            if (!el)
+                continue
+            const m = Elements.pointsAlong(el, [0.5])[0]
+            const s = toScreen(m.x / mpp, m.y / mpp)
+            if (Math.hypot(s.x - h.x, s.y - h.y) < 14)
+                return id
+        }
+        return ""
+    }
+
     onPhotoSourceChanged: fitPending = true
     onWidthChanged: tryFit()
     onHeightChanged: tryFit()
@@ -323,6 +340,7 @@ Item {
                 zoom: canvas.zoom
                 selected: element !== null && TrackStore.selectedId === element.id
                 dimmed: TrackStore.previewOn
+                backwards: element !== null && TrackStore.backwardIds.indexOf(element.id) >= 0
             }
         }
         ElementView {
@@ -339,6 +357,18 @@ Item {
     Item {
         id: overlay
         anchors.fill: parent
+
+        Label {
+            objectName: "warningTip"
+            z: 1
+            visible: canvas.hoverWarning !== "" && canvas.hover !== null
+            x: canvas.hover ? canvas.toScreen(canvas.hover.x, canvas.hover.y).x + 16 : 0
+            y: canvas.hover ? canvas.toScreen(canvas.hover.x, canvas.hover.y).y + 12 : 0
+            text: qsTr("Runs against the track: right-click › Reverse direction")
+            color: "#f0f0f0"
+            padding: 6
+            background: Rectangle { color: "#333333"; radius: 4; border.color: "#ffb300" }
+        }
 
         Repeater {
             model: ["origin", "direction"]
@@ -399,5 +429,6 @@ Item {
         id: elementMenu
         MenuItem { text: qsTr("Duplicate"); onTriggered: TrackStore.duplicateSelected() }
         MenuItem { text: qsTr("Delete"); onTriggered: TrackStore.deleteSelected() }
+        MenuItem { text: qsTr("Reverse direction"); onTriggered: TrackStore.reverseSelected() }
     }
 }

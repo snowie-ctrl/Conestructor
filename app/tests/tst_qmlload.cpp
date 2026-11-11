@@ -49,6 +49,25 @@ static QQuickItem *findButton(QQuickWindow *window, const QString &text)
     return nullptr;
 }
 
+// The visible setting with this label.
+static QQuickItem *findField(QQuickWindow *window, const QString &label)
+{
+    for (QQuickItem *item : allItems(window->contentItem())) {
+        const QVariant def = item->property("def");
+        if (def.isValid() && item->isVisible() && def.toMap().value(QStringLiteral("label")).toString() == label)
+            return item;
+    }
+    return nullptr;
+}
+
+static QQuickItem *textBox(QQuickItem *field)
+{
+    for (QQuickItem *item : allItems(field))
+        if (QByteArray(item->metaObject()->className()).contains("TextField"))
+            return item;
+    return nullptr;
+}
+
 // Loads the real window offscreen. Any warning from QML (a broken binding, a missing property) fails the run.
 class TestQmlLoad : public QObject
 {
@@ -835,6 +854,92 @@ private slots:
         QCOMPARE(count(), 3);
         QVERIFY(!tile(QStringLiteral("straight"))->property("usable").toBool());
         QVERIFY(checklist->property("open").toBool());
+    }
+    // Every element shows arrows; reversing a turn in the middle of a chain flags it with a warning (with a tip on
+    // hover) and reversing it back clears it; typing a rotation turns the chain.
+    void arrowsReverseAndTypedRotation()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(window));
+        auto *canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QVERIFY(canvas && store);
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QTRY_VERIFY(canvas->property("fitPending").toBool() == false);
+
+        auto element = [&](const QString &id) {
+            QVariant v;
+            QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+            return qvariant_cast<QJSValue>(v).toVariant().toMap();
+        };
+        auto view = [&](const QString &id) -> QQuickItem * {
+            for (QQuickItem *item : allItems(canvas))
+                if (QByteArray(item->metaObject()->className()).startsWith("ElementView")
+                    && qvariant_cast<QJSValue>(item->property("element")).property("id").toString() == id)
+                    return item;
+            return nullptr;
+        };
+        auto backwardIds = [&]() {
+            return qvariant_cast<QJSValue>(store->property("backwardIds")).toVariant().toStringList();
+        };
+        auto label = [&]() { return store->property("undoLabel").toString(); };
+
+        for (const QString &id : { QStringLiteral("e1"), QStringLiteral("e2"), QStringLiteral("e3"), QStringLiteral("e4") })
+            QVERIFY2(qvariant_cast<QJSValue>(view(id)->property("arrows")).property("length").toInt() >= 2, qPrintable(id));
+        QVERIFY(backwardIds().isEmpty());
+
+        // Reverse the turn in the middle: it now runs against the track.
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QStringLiteral("e3")));
+        QMetaObject::invokeMethod(store, "reverseSelected");
+        QCOMPARE(label(), QStringLiteral("Reverse Turn"));
+        QCOMPARE(element(QStringLiteral("e3")).value("props").toMap().value("direction").toString(), QStringLiteral("left"));
+        QCOMPARE(element(QStringLiteral("e2")).value("joins").toMap().value("B").toMap().value("id").toString(), QStringLiteral("e3"));
+        QCOMPARE(element(QStringLiteral("e4")).value("joins").toMap().value("A").toMap().value("id").toString(), QStringLiteral("e3"));
+        QCOMPARE(backwardIds(), QStringList({ QStringLiteral("e3") }));
+        QVERIFY(view(QStringLiteral("e3"))->property("backwards").toBool());
+
+        // Hovering its warning shows the tip.
+        const double mpp = store->property("mpp").toDouble();
+        const QVariantMap middle = qvariant_cast<QJSValue>(view(QStringLiteral("e3"))->property("middle")).toVariant().toMap();
+        QVariant at;
+        QMetaObject::invokeMethod(canvas, "toScreen", Q_RETURN_ARG(QVariant, at),
+                                  Q_ARG(QVariant, middle.value("x").toDouble() / mpp),
+                                  Q_ARG(QVariant, middle.value("y").toDouble() / mpp));
+        const QVariantMap s = qvariant_cast<QJSValue>(at).toVariant().toMap();
+        QTest::mouseMove(window, canvas->mapToScene(QPointF(s.value("x").toDouble(), s.value("y").toDouble())).toPoint());
+        QTRY_COMPARE(canvas->property("hoverWarning").toString(), QStringLiteral("e3"));
+        auto *tip = window->findChild<QQuickItem *>(QStringLiteral("warningTip"));
+        QVERIFY(tip && tip->isVisible());
+
+        // Reversing it back clears the warning.
+        QMetaObject::invokeMethod(store, "reverseSelected");
+        QVERIFY(backwardIds().isEmpty());
+
+        // Typed rotation: 90 degrees turns the whole chain; one undo puts it back; the arrows step 1 and Shift 15.
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QStringLiteral("e1")));
+        QQuickItem *rotation = findField(window, QStringLiteral("Rotation"));
+        QVERIFY(rotation);
+        QQuickItem *input = textBox(rotation);
+        QCOMPARE(input->property("text").toString(), QStringLiteral("0\u00b0"));
+        QTest::mouseClick(window, Qt::LeftButton, {}, input->mapToScene(QPointF(input->width() / 2, input->height() / 2)).toPoint());
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        QTest::keyClick(window, '9');
+        QTest::keyClick(window, '0');
+        QCOMPARE(element(QStringLiteral("e1")).value("rotation").toDouble(), -90.0);   // canvas headings are clockwise
+        QVERIFY(!element(QStringLiteral("e1")).value("joins").toMap().value("B").isNull());
+        QTest::keyClick(window, Qt::Key_Return);
+        QCOMPARE(label(), QStringLiteral("Rotate Straight"));
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(element(QStringLiteral("e1")).value("rotation").toDouble(), 0.0);
+        QTest::mouseClick(window, Qt::LeftButton, {}, input->mapToScene(QPointF(input->width() / 2, input->height() / 2)).toPoint());
+        QTest::keyClick(window, Qt::Key_Up);
+        QCOMPARE(element(QStringLiteral("e1")).value("rotation").toDouble(), -1.0);
+        QTest::keyClick(window, Qt::Key_Up, Qt::ShiftModifier);
+        QCOMPARE(element(QStringLiteral("e1")).value("rotation").toDouble(), -16.0);
     }
 };
 

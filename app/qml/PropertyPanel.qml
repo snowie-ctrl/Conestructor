@@ -51,10 +51,17 @@ ScrollView {
                                                                      .arg(Units.format(panel.framePosition.y, Settings.units)) : ""
             color: "#b0b0b0"
         }
-        Label {
+        // Degrees counter-clockwise from the Origin -> Direction axis. Typing turns the element's whole joined chain.
+        PropField {
             visible: panel.framePosition !== null
-            text: qsTr("Rotation   %1").arg(Units.formatAngle(panel.frameRotation))
-            color: "#b0b0b0"
+            def: ({ key: "rotation", label: qsTr("Rotation"), kind: "angle", min: -360, max: 360 })
+            value: panel.frameRotation
+            stepSize: 1
+            bigStep: 15
+            onEdited: (v) => TrackStore.run("rotateChain", { id: panel.el.id,
+                                                             rotation: Frame.headingFromFrame(TrackStore.frame, v),
+                                                             mergeKey: "rotation:" + panel.el.id })
+            onFinished: TrackStore.seal()
         }
 
         Repeater {
