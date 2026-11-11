@@ -17,6 +17,10 @@ export const MESSAGES = {
     damaged: "That track file is damaged.",
     photo: "The photo in that file couldn't be read; the blueprint is shown instead."
 }
+// Element ids the canvas uses for the ruler and the targets: an element may not take them.
+const RESERVED_IDS = ["ruler", "origin", "direction"]
+// Joined ends further apart than this in a hand-edited file are unjoined on open.
+export const JOIN_SLACK = 0.05
 
 // Rounded to `places` decimals; adding 0 turns -0 into 0 so the file never says "-0".
 function round(value, places) {
@@ -102,6 +106,25 @@ function readElement(v) {
     return { id: v.id, type: v.type, x: v.x, y: v.y, rotation: v.rotation, props: props, joins: joins }
 }
 
+// Joins a hand edit has made impossible: ends more than JOIN_SLACK apart, or a line (lines are never joined). Both
+// sides are unjoined, quietly.
+function repairJoins(elements) {
+    for (const el of elements) {
+        for (const end of ["A", "B"]) {
+            const j = el.joins[end]
+            if (!j)
+                continue
+            const other = elements.find(e => e.id === j.id)
+            const a = Elements.endsWorld(el)[end]
+            const b = Elements.endsWorld(other)[j.end]
+            if (el.type === "line" || other.type === "line" || Math.hypot(a.x - b.x, a.y - b.y) > JOIN_SLACK) {
+                el.joins[end] = null
+                other.joins[j.end] = null
+            }
+        }
+    }
+}
+
 // The track from a document's `design`, or null when it is damaged.
 function readDesign(d) {
     if (!isObject(d) || !isObject(d.photo) || !isObject(d.targets) || !Array.isArray(d.elements))
@@ -125,7 +148,7 @@ function readDesign(d) {
     const elements = []
     for (const v of d.elements) {
         const el = readElement(v)
-        if (!el || elements.some(e => e.id === el.id))
+        if (!el || RESERVED_IDS.indexOf(el.id) >= 0 || elements.some(e => e.id === el.id))
             return null
         elements.push(el)
     }
@@ -134,6 +157,8 @@ function readDesign(d) {
             const j = el.joins[end]
             if (!j)
                 continue
+            if (j.id === el.id)
+                return null                                  // an element joined to itself
             const other = elements.find(e => e.id === j.id)
             const back = other ? other.joins[j.end] : null
             if (!back || back.id !== el.id || back.end !== end)
@@ -143,6 +168,7 @@ function readDesign(d) {
     const scale = Commands.rulerMetresPerPixel(ruler)
     if (elements.length > 0 && !(scale > 0))
         return null
+    repairJoins(elements)
     let nextId = isNumber(d.nextId) ? Math.max(1, Math.floor(d.nextId)) : 1
     for (const el of elements) {
         const m = /^e(\d+)$/.exec(el.id)

@@ -61,7 +61,7 @@ The fields always come in this order, and the photo is always last, so the reada
 | `saved` | When it was saved, ISO 8601 UTC. |
 | `units`, `axes` | Fixed: metres, and the frame in words. |
 | `targets` | `origin` (always `{ "x": 0, "y": 0 }`), `direction` (always on +x) and the `distance` between them in metres. `origin` is `null` until Origin is placed; `direction` and `distance` are `null` until Origin, Direction and the scale are all set. |
-| `cones` | Every cone in driving order. `index` counts from 0; `type` is `standing` or `leaning`; `x`, `y` in metres (to the millimetre); `heading` is where a leaning cone points (0 for standing cones); `element` is the id of the track element that made it (`null` for a cone added by hand). Empty when the track cannot be processed yet. |
+| `cones` | Every cone in driving order. Cones of lines (straight rows for walls and boundaries) come after the course. `index` counts from 0; `type` is `standing` or `leaning`; `x`, `y` in metres (to the millimetre); `heading` is where a leaning cone points (0 for standing cones); `element` is the id of the track element that made it (`null` for a cone added by hand). Empty when the track cannot be processed yet. |
 | `design` | Conestructor's own editable track (element settings, joins, the ruler, positions on the photo). It may change between app versions; other apps should read `cones` instead. |
 | `photo` | The lot photo: `mediaType` (`image/png` or `image/jpeg`), `width` and `height` in pixels, and `data`, the original file's bytes in base64. `null` when the track has no photo. |
 
