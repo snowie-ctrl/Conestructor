@@ -1544,6 +1544,122 @@ private slots:
         QVERIFY(card->isVisible());
         QCOMPARE(step(), QStringLiteral("direction"));
     }
+
+    // Minor 2: after Don't save and a refused Open, the still-unsaved track is backed up again.
+    void aDiscardedTrackIsBackedUpAgain()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        auto backup = [&]() {
+            QVariantMap found;
+            QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+            return found;
+        };
+        w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+        QMetaObject::invokeMethod(w.window, "backUp");
+        QVERIFY(!backup().isEmpty());
+        QMetaObject::invokeMethod(w.window, "openRecent", Q_ARG(QVariant, dir.filePath(QStringLiteral("Gone.cone"))));
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("unsavedDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        w.clickItem(findButton(w.window, QStringLiteral("Don't save")));
+        QTRY_VERIFY(backup().isEmpty());
+        QVERIFY(w.store->property("dirty").toBool());         // the open was refused: the track is still unsaved
+        QMetaObject::invokeMethod(w.window, "backUp");
+        QVERIFY(!backup().isEmpty());
+        QMetaObject::invokeMethod(files, "deleteBackup");
+    }
+
+    // Minor 3: a relative path on the command line is opened and kept as an absolute one.
+    void aRelativePathAtStartBecomesAbsolute()
+    {
+        const QString path = dir.filePath(QStringLiteral("Relative.cone"));
+        {
+            Loaded w;
+            QVERIFY(w.load(true));
+            QVariant ok;
+            QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+            QVERIFY(ok.toBool());
+        }
+        Loaded w;
+        QVERIFY(w.load(false));
+        // No backup from an earlier test, so start() goes straight to the file.
+        QMetaObject::invokeMethod(w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "deleteBackup");
+        const QString old = QDir::currentPath();
+        QDir::setCurrent(dir.path());
+        QMetaObject::invokeMethod(w.window, "start", Q_ARG(QVariant, QStringLiteral("Relative.cone")));
+        QDir::setCurrent(old);
+        QCOMPARE(w.store->property("elementCount").toInt(), 4);
+        QCOMPARE(w.store->property("filePath").toString(), QDir::toNativeSeparators(path));
+    }
+
+    // Minor 5: a long track name wraps in the unsaved-changes question.
+    void aLongNameWrapsInTheQuestion()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        w.store->setProperty("filePath", dir.filePath(QString(120, QChar('x')) + QStringLiteral(".cone")));
+        w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+        QMetaObject::invokeMethod(w.window, "newTrack");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("unsavedDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *question = w.named(QStringLiteral("unsavedQuestion"));
+        QVERIFY(question);
+        QVERIFY(question->property("lineCount").toInt() > 1);
+        QVERIFY(question->width() <= dialog->property("availableWidth").toDouble());
+        w.clickItem(findButton(w.window, QStringLiteral("Cancel")));
+    }
+
+    // Minor 6: Save As starts in the open track's folder with its name; an Untitled track has no start of its own.
+    void saveAsStartsBesideTheTrack()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QVariant start;
+        QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
+        QVERIFY(isNull(start));
+        const QString path = dir.filePath(QStringLiteral("Duck pond.cone"));
+        w.store->setProperty("filePath", path);
+        QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
+        const QVariantMap s = plain(start).toMap();
+        QCOMPARE(s.value("folder").toUrl(), QUrl::fromLocalFile(dir.path()));
+        QCOMPARE(s.value("file").toUrl(), QUrl::fromLocalFile(path));
+    }
+
+    // Minor 7: a backup that cannot be read says so once and is removed, so it is not offered again.
+    void anUnreadableBackupIsRemoved()
+    {
+        QString backupPath;
+        {
+            Loaded w;
+            QVERIFY(w.load(true));
+            w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+            QMetaObject::invokeMethod(w.window, "backUp");
+            QObject *files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+            QVariantMap found;
+            QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+            backupPath = found.value("path").toString();
+            QVERIFY(!backupPath.isEmpty());
+        }
+        QFile broken(backupPath);
+        QVERIFY(broken.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        broken.write("not a track");
+        broken.close();
+
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "start", Q_ARG(QVariant, QString()));
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("restoreDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        w.clickItem(findButton(w.window, QStringLiteral("Restore")));
+        QTRY_COMPARE(findBanner(w.window)->property("text").toString(),
+                     QStringLiteral("The backup couldn't be read and has been removed."));
+        QObject *files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        QVariantMap found;
+        QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+        QVERIFY(found.isEmpty());
+        QCOMPARE(w.store->property("elementCount").toInt(), 0);
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

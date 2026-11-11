@@ -215,6 +215,21 @@ private slots:
         later.deleteBackup();
         QVERIFY(later.findBackup().isEmpty());
     }
+
+    // Minor 3 and 6: a path from the command line is made absolute; Save As starts beside the open track.
+    void pathsForTheCommandLineAndSaveAs()
+    {
+        TrackFile files;
+        const QString old = QDir::currentPath();
+        QDir::setCurrent(dir.path());
+        QCOMPARE(files.absolutePath(QStringLiteral("Relative.cone")),
+                 QDir::toNativeSeparators(QDir(dir.path()).filePath(QStringLiteral("Relative.cone"))));
+        QCOMPARE(files.absolutePath(QString()), QString());
+        QDir::setCurrent(old);
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("Duck pond.cone"));
+        QCOMPARE(files.folderUrl(path), QUrl::fromLocalFile(dir.path()));
+        QCOMPARE(files.fileUrl(path), QUrl::fromLocalFile(path));
+    }
 };
 
 QTEST_MAIN(TestTrackFile)

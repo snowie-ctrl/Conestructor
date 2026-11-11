@@ -97,6 +97,15 @@ QtObject {
         syncStack()
     }
 
+    // The track text last backed up (Main's two-minute timer), so an unchanged track is not written again. Deleting the
+    // backup forgets it, so a track still unsaved afterwards is backed up again.
+    property string backedUpText: ""
+
+    function deleteBackup() {
+        TrackFile.deleteBackup()
+        backedUpText = ""
+    }
+
     // Ends the current step: the next change, even to the same field, is a new undo step.
     function seal() {
         stack.seal()
@@ -142,7 +151,7 @@ QtObject {
         filePath = path
         markSaved()
         Settings.addRecentFile(path)
-        TrackFile.deleteBackup()
+        deleteBackup()
         message = qsTr("Saved %1").arg(path)
         return true
     }
