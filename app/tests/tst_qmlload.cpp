@@ -1,5 +1,6 @@
 #include <QQmlApplicationEngine>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
 #include <QJSValue>
@@ -67,6 +68,122 @@ static QQuickItem *textBox(QQuickItem *field)
             return item;
     return nullptr;
 }
+
+// Whether a QML `var` property holds null (or nothing).
+static bool isNull(const QVariant &v)
+{
+    return !v.isValid() || v.isNull() || qvariant_cast<QJSValue>(v).isNull();
+}
+
+// A QML `var` value as plain Qt values (a JS array becomes a QVariantList, an object a QVariantMap).
+static QVariant plain(const QVariant &v)
+{
+    return v.userType() == qMetaTypeId<QJSValue>() ? qvariant_cast<QJSValue>(v).toVariant() : v;
+}
+
+// One loaded Main with the helpers the part 3 window tests share.
+struct Loaded
+{
+    QQmlApplicationEngine engine;
+    QQuickWindow *window = nullptr;
+    QQuickItem *canvas = nullptr;
+    QObject *store = nullptr;
+
+    // Loads and shows Main; `demo` loads the example track (setup done) and waits for it to be fitted.
+    bool load(bool demo)
+    {
+        engine.loadFromModule("Conestructor", "Main");
+        if (engine.rootObjects().isEmpty())
+            return false;
+        window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (!window || !QTest::qWaitForWindowExposed(window))
+            return false;
+        window->requestActivate();
+        if (!QTest::qWaitForWindowActive(window))
+            return false;
+        canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        if (!canvas || !store)
+            return false;
+        if (demo)
+            QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        return QTest::qWaitFor([this]() { return !canvas->property("fitPending").toBool(); });
+    }
+
+    QVariantMap element(const QString &id) const
+    {
+        QVariant v;
+        QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+        return qvariant_cast<QJSValue>(v).toVariant().toMap();
+    }
+    QVariantMap track() const { return plain(store->property("track")).toMap(); }
+    double mpp() const { return store->property("mpp").toDouble(); }
+    double zoom() const { return canvas->property("zoom").toDouble(); }
+    // A point in canvas metres, on screen (canvas coordinates).
+    QPointF screen(double mx, double my) const
+    {
+        QVariant v;
+        QMetaObject::invokeMethod(canvas, "toScreen", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, mx / mpp()),
+                                  Q_ARG(QVariant, my / mpp()));
+        const QVariantMap p = qvariant_cast<QJSValue>(v).toVariant().toMap();
+        return { p.value("x").toDouble(), p.value("y").toDouble() };
+    }
+    // A screen point (canvas coordinates) in photo pixels.
+    QPointF world(QPointF s) const
+    {
+        QVariant v;
+        QMetaObject::invokeMethod(canvas, "toWorld", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, s.x()), Q_ARG(QVariant, s.y()));
+        const QVariantMap p = qvariant_cast<QJSValue>(v).toVariant().toMap();
+        return { p.value("x").toDouble(), p.value("y").toDouble() };
+    }
+    QPoint scene(QPointF p) const { return canvas->mapToScene(p).toPoint(); }
+    void click(QPointF p, Qt::MouseButton button = Qt::LeftButton) const { QTest::mouseClick(window, button, {}, scene(p)); }
+    void drag(QPointF from, QPointF to, int steps = 8) const
+    {
+        const QPoint a = scene(from);
+        const QPoint b = scene(to);
+        QTest::mousePress(window, Qt::LeftButton, {}, a);
+        for (int i = 1; i <= steps; ++i)
+            QTest::mouseMove(window, a + (b - a) * i / steps);
+        QTest::mouseRelease(window, Qt::LeftButton, {}, b);
+    }
+    void clickItem(QQuickItem *item) const
+    {
+        QTest::mouseClick(window, Qt::LeftButton, {}, item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+    }
+    void run(const QString &name, const QVariantMap &args) const
+    {
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, name), Q_ARG(QVariant, args));
+    }
+    QString label() const { return store->property("undoLabel").toString(); }
+    QQuickItem *named(const QString &objectName) const
+    {
+        for (QQuickItem *item : allItems(window->contentItem()))
+            if (item->objectName() == objectName)
+                return item;
+        return nullptr;
+    }
+    // The palette or checklist tile for `kind`.
+    QQuickItem *tile(const QString &kind) const
+    {
+        for (QQuickItem *item : allItems(window->contentItem()))
+            if (QByteArray(item->metaObject()->className()).startsWith("PaletteTile") && item->property("kind").toString() == kind)
+                return item;
+        return nullptr;
+    }
+    // The ElementView drawing element `id`.
+    QQuickItem *view(const QString &id) const
+    {
+        for (QQuickItem *item : allItems(window->contentItem())) {
+            if (!QByteArray(item->metaObject()->className()).startsWith("ElementView"))
+                continue;
+            const QVariantMap e = qvariant_cast<QJSValue>(item->property("element")).toVariant().toMap();
+            if (e.value("id").toString() == id)
+                return item;
+        }
+        return nullptr;
+    }
+};
 
 // Loads the real window offscreen. Any warning from QML (a broken binding, a missing property) fails the run.
 class TestQmlLoad : public QObject
@@ -1150,6 +1267,63 @@ private slots:
             QVERIFY(!backup(engine).isEmpty());
             QMetaObject::invokeMethod(engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "deleteBackup");
         }
+    }
+
+    // A folded turn shows the warning with the fix in display units; a line draws no arrows, a dot per cone, and its
+    // cones come last.
+    void foldsAndLinesOnTheCanvas()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        w.run(QStringLiteral("setProp"), { { "id", "e3" }, { "key", "radius" }, { "value", 1.0 } });
+        QCOMPARE(plain(w.store->property("foldedIds")).toStringList(), QStringList{ QStringLiteral("e3") });
+        QVERIFY(w.view(QStringLiteral("e3"))->property("folded").toBool());
+        QVariant text;
+        QMetaObject::invokeMethod(w.canvas, "warningText", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, QStringLiteral("e3")));
+        // Half the 4 m width, in whatever units an earlier test left saved.
+        QVERIFY2(text.toString().startsWith(QStringLiteral("Folds in on itself: make the radius at least "))
+                     && text.toString().endsWith(QStringLiteral(", or the track narrower.")), qPrintable(text.toString()));
+
+        w.run(QStringLiteral("add"), { { "type", "line" }, { "x", 120.0 }, { "y", 68.0 } });
+        QQuickItem *line = w.view(QStringLiteral("e5"));
+        QVERIFY(line);
+        QCOMPARE(plain(line->property("chevrons")).toList().size(), 0);
+        QCOMPARE(plain(line->property("dots")).toList().size(), 8);
+        QVERIFY(plain(w.view(QStringLiteral("e1"))->property("chevrons")).toList().size() >= 2);
+
+        QMetaObject::invokeMethod(w.store, "placeCones");
+        const QVariantList cones = plain(w.store->property("preview")).toMap().value("canvasCones").toList();
+        QCOMPARE(cones.last().toMap().value("element").toString(), QStringLiteral("e5"));
+    }
+
+    // Part 2's minor: arrows were one item per chevron, rebuilt on every edit. Dragging one element of a 40-element
+    // course must keep up: the average time to handle a mouse move stays under a budget measured on the owner's machine.
+    void draggingOnABigCourseKeepsUp()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        for (int i = 5; i <= 40; ++i) {
+            QVariantMap add{ { "type", i % 2 ? QStringLiteral("turn") : QStringLiteral("straight") }, { "x", 0.0 }, { "y", 0.0 },
+                             { "snap", QVariantMap{ { "ownEnd", "A" }, { "id", QStringLiteral("e%1").arg(i - 1) }, { "end", "B" } } } };
+            if (i % 2)
+                add.insert("props", QVariantMap{ { "angle", 20.0 } });
+            w.run(QStringLiteral("add"), add);
+        }
+        QCOMPARE(w.store->property("elementCount").toInt(), 40);
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const QPointF from = w.screen(e1.value("x").toDouble(), e1.value("y").toDouble());
+        const QPoint a = w.scene(from);
+        QElapsedTimer timer;
+        QTest::mousePress(w.window, Qt::LeftButton, {}, a);
+        timer.start();
+        const int moves = 20;
+        for (int i = 1; i <= moves; ++i)
+            QTest::mouseMove(w.window, a + QPoint(0, 4 * i));
+        const double perMove = double(timer.elapsed()) / moves;
+        QTest::mouseRelease(w.window, Qt::LeftButton, {}, a + QPoint(0, 4 * moves));
+        qInfo("ms per move on a 40-element course: %.1f", perMove);
+        const double budget = 520;      // twice the 260 ms measured on the owner's machine (debug build), part 3
+        QVERIFY2(perMove < budget, qPrintable(QStringLiteral("%1 ms per move").arg(perMove)));
     }
 };
 

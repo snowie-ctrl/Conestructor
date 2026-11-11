@@ -3,6 +3,7 @@ import QtQuick
 import Conestructor
 import "logic/commands.mjs" as Commands
 import "logic/conefile.mjs" as ConeFile
+import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
 import "logic/postprocess.mjs" as Post
 
@@ -38,6 +39,8 @@ QtObject {
 
     // Elements driven against the rest of their chain: they show a warning (Reverse direction fixes it).
     readonly property var backwardIds: Post.backwards(track.elements)
+    // Elements whose inside edge crosses over itself: they show a warning too (advice only).
+    readonly property var foldedIds: track.elements.filter(e => Elements.folds(e)).map(e => e.id)
 
     property string message: ""
     property bool previewOn: false

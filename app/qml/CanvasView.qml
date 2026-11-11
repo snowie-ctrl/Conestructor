@@ -43,7 +43,7 @@ Item {
         if (!hover || !(mpp > 0))
             return ""
         const h = toScreen(hover.x, hover.y)
-        for (const id of TrackStore.backwardIds) {
+        for (const id of TrackStore.backwardIds.concat(TrackStore.foldedIds)) {
             const el = TrackStore.element(id)
             if (!el)
                 continue
@@ -148,6 +148,21 @@ Item {
         if (t.ruler && Elements.pointSegmentDistance(w, t.ruler.a, t.ruler.b) < 6 / zoom)
             return { kind: "ruler" }
         return null
+    }
+
+    // What an element's warning says: driven backwards, folding in on itself, or both (one line each).
+    function warningText(id) {
+        const el = TrackStore.element(id)
+        if (!el)
+            return ""
+        const lines = []
+        if (TrackStore.backwardIds.indexOf(id) >= 0)
+            lines.push(qsTr("Runs against the track: right-click › Reverse direction"))
+        const fold = Elements.foldAdvice(el, m => Units.format(m, Settings.units))
+        if (fold !== "")
+            lines.push(fold)
+        return lines.join("
+")
     }
 
     function beginPlacing(kind) {
@@ -386,6 +401,7 @@ Item {
                 single: TrackStore.selection.length === 1
                 dimmed: TrackStore.previewOn
                 backwards: element !== null && TrackStore.backwardIds.indexOf(element.id) >= 0
+                folded: element !== null && TrackStore.foldedIds.indexOf(element.id) >= 0
             }
         }
         ElementView {
@@ -420,7 +436,7 @@ Item {
             visible: canvas.hoverWarning !== "" && canvas.hover !== null
             x: canvas.hover ? canvas.toScreen(canvas.hover.x, canvas.hover.y).x + 16 : 0
             y: canvas.hover ? canvas.toScreen(canvas.hover.x, canvas.hover.y).y + 12 : 0
-            text: qsTr("Runs against the track: right-click › Reverse direction")
+            text: canvas.warningText(canvas.hoverWarning)
             color: "#f0f0f0"
             padding: 6
             background: Rectangle { color: "#333333"; radius: 4; border.color: "#ffb300" }
