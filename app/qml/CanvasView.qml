@@ -232,6 +232,13 @@ Item {
         hover = toWorld(e.x, e.y)
         if (!mouse.pressed || mode === "")
             return
+        // Nothing but a pan moves until the pointer has travelled a drag's distance: a click that wobbles a pixel
+        // only selects, and never unjoins anything.
+        if (mode !== "pan" && !press.dragging) {
+            if (Math.hypot(e.x - press.sx, e.y - press.sy) < Qt.styleHints.startDragDistance)
+                return
+            press.dragging = true
+        }
         const dx = (e.x - press.sx) / zoom
         const dy = (e.y - press.sy) / zoom
         if (mode === "pan") {

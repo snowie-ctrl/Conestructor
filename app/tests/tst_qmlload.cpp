@@ -440,6 +440,45 @@ private slots:
         QMetaObject::invokeMethod(canvas, "showTarget", Q_ARG(QVariant, banner()->property("target")));
         QCOMPARE(store->property("selectedId").toString(), QStringLiteral("ruler"));
     }
+
+    // A click whose pointer wobbles a pixel only selects: it moves nothing, keeps the chain joined, records no step.
+    void aClickWithAWobbleOnlySelects()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QVERIFY(canvas && store);
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QTRY_VERIFY(canvas->property("fitPending").toBool() == false);
+
+        auto element = [&](const QString &id) {
+            QVariant v;
+            QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+            return qvariant_cast<QJSValue>(v).toVariant().toMap();
+        };
+        const double mpp = store->property("mpp").toDouble();
+        const QVariantMap slalom = element(QStringLiteral("e2"));
+        QVariant v;
+        QMetaObject::invokeMethod(canvas, "toScreen", Q_RETURN_ARG(QVariant, v),
+                                  Q_ARG(QVariant, slalom.value("x").toDouble() / mpp),
+                                  Q_ARG(QVariant, slalom.value("y").toDouble() / mpp));
+        const QVariantMap p = qvariant_cast<QJSValue>(v).toVariant().toMap();
+        const QPoint middle = canvas->mapToScene(QPointF(p.value("x").toDouble(), p.value("y").toDouble())).toPoint();
+
+        QTest::mousePress(window, Qt::LeftButton, {}, middle);
+        QTest::mouseMove(window, middle + QPoint(1, 0));
+        QTest::mouseMove(window, middle + QPoint(1, 1));
+        QTest::mouseRelease(window, Qt::LeftButton, {}, middle + QPoint(1, 1));
+
+        QCOMPARE(store->property("selectedId").toString(), QStringLiteral("e2"));
+        QVERIFY(!store->property("canUndo").toBool());
+        const QVariantMap joins = element(QStringLiteral("e2")).value("joins").toMap();
+        QVERIFY(!joins.value("A").isNull());
+        QVERIFY(!joins.value("B").isNull());
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

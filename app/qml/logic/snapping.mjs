@@ -126,3 +126,50 @@ export function glueAll(elements) {
             done.push(id)
     }
 }
+
+const TOUCH_METRES = 1e-6
+
+function facesAway(a, b) {
+    const turn = (((a.heading - b.heading) % 360) + 360) % 360
+    return Math.abs(turn - 180) < 1e-6
+}
+
+// Joins every open end of element `id` that already meets another element's open end, facing the opposite way.
+// After a snap this restores the far side too: an element dropped back into its gap joins both neighbours.
+export function joinTouching(elements, id) {
+    const self = byId(elements, id)
+    for (const ownEnd of ["A", "B"]) {
+        if (self.joins[ownEnd])
+            continue
+        const own = Elements.endsWorld(self)[ownEnd]
+        for (const el of elements) {
+            if (el.id === id || self.joins[ownEnd])
+                continue
+            const ends = Elements.endsWorld(el)
+            for (const end of ["A", "B"]) {
+                if (!el.joins[end] && Math.hypot(own.x - ends[end].x, own.y - ends[end].y) < TOUCH_METRES
+                        && facesAway(own, ends[end])) {
+                    join(elements, id, ownEnd, el.id, end)
+                    break
+                }
+            }
+        }
+    }
+}
+
+// Unjoins every joint whose ends no longer meet (a closed loop that an edit made impossible to close), so the
+// canvas shows the gap as open ends instead of a join that is not there.
+export function unjoinApart(elements) {
+    for (const el of elements) {
+        for (const end of ["A", "B"]) {
+            const mate = el.joins[end]
+            if (!mate)
+                continue
+            const other = byId(elements, mate.id)
+            const a = Elements.endsWorld(el)[end]
+            const b = other ? Elements.endsWorld(other)[mate.end] : null
+            if (!b || Math.hypot(a.x - b.x, a.y - b.y) >= TOUCH_METRES)
+                unjoin(elements, el.id, end)
+        }
+    }
+}

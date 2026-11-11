@@ -37,6 +37,7 @@ function attach(track, el, snap) {
         return
     Object.assign(el, Snapping.placeToJoin(el, snap.ownEnd, find(track, snap.id), snap.end))
     Snapping.join(track.elements, el.id, snap.ownEnd, snap.id, snap.end)
+    Snapping.joinTouching(track.elements, el.id)
 }
 
 function point(p) {
@@ -66,6 +67,7 @@ const COMMANDS = {
                 el.y *= k
             }
             Snapping.glueAll(t.elements)
+            Snapping.unjoinApart(t.elements)
         }
         t.photo.metresPerPixel = newScale
         return t
@@ -102,6 +104,7 @@ const COMMANDS = {
         const el = find(t, a.id)
         el.props[a.key] = Elements.clampProp(el.type, a.key, a.value).value
         Snapping.settle(t.elements, el.id)
+        Snapping.unjoinApart(t.elements)
         return t
     },
     remove(t, a) {

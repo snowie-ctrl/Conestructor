@@ -217,6 +217,45 @@ TestCase {
         verify(!stack.canUndo())
     }
 
+    function test_droppingBackIntoAGapJoinsBothEnds() {
+        // e2 sits between e1 and e3; placed back where it was, snapped to e1, it joins e3 again too.
+        const t0 = base()
+        const e2 = byId(t0, "e2")
+        const t = Commands.run(new Commands.UndoStack(), t0, "place",
+                               { id: "e2", x: e2.x + 0.05, y: e2.y + 0.02, rotation: e2.rotation,
+                                 snap: { ownEnd: "A", id: "e1", end: "B" } })
+        compare(byId(t, "e2").joins.A.id, "e1")
+        verify(byId(t, "e2").joins.B !== null, "e2's exit joined again")
+        compare(byId(t, "e3").joins.A.id, "e2")
+    }
+
+    function test_noJoinedEndsAreLeftApart() {
+        // Four quarter turns joined into a closed ring; a bigger radius on one cannot close, so the joint that
+        // opens is unjoined rather than left looking joined.
+        const turn = { angle: 90, radius: 6, leadIn: 0, leadOut: 0 }
+        const s = new Commands.UndoStack()
+        let t = Commands.run(s, Commands.emptyTrack(), "setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 10 })
+        t = Commands.run(s, t, "add", { type: "turn", x: 20, y: 20, props: turn })
+        for (const id of ["e1", "e2", "e3"])
+            t = Commands.run(s, t, "add", { type: "turn", x: 0, y: 0, props: turn, snap: { ownEnd: "A", id: id, end: "B" } })
+        const e1 = byId(t, "e1")
+        t = Commands.run(s, t, "place", { id: "e1", x: e1.x, y: e1.y, rotation: e1.rotation,
+                                          snap: { ownEnd: "A", id: "e4", end: "B" } })
+        compare(byId(t, "e1").joins.A.id, "e4")
+        compare(byId(t, "e1").joins.B.id, "e2")            // the ring is closed
+        t = Commands.run(s, t, "setProp", { id: "e2", key: "radius", value: 8 })
+        let joins = 0
+        for (const el of t.elements)
+            for (const end of ["A", "B"]) {
+                const mate = el.joins[end]
+                if (!mate)
+                    continue
+                joins += 1
+                verify(endsMeet(t, el.id, end, mate.id, mate.end), el.id + "." + end + " is joined but apart")
+            }
+        verify(joins >= 6, "the rest of the ring stays joined: " + joins)
+    }
+
     function test_aRulerWithoutElementsCanBeRemoved() {
         const s = new Commands.UndoStack()
         let t = Commands.run(s, Commands.emptyTrack(), "setRuler", { a: { x: 0, y: 0 }, b: { x: 50, y: 0 }, realLength: 0 })
