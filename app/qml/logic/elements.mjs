@@ -21,7 +21,7 @@ const LEAD_IN = { key: "leadIn", label: "Lead-in", kind: "length", min: 0, max: 
 const LEAD_OUT = { key: "leadOut", label: "Lead-out", kind: "length", min: 0, max: 100 }
 const SIDES = { kind: "choice", choices: ["left", "right"], labels: ["Left", "Right"] }
 
-// Physical limits only; the rulebook's limits are part 3's warnings and never block.
+// Physical limits only. The rulebook is not applied to elements: people design however they like (part 3).
 export const PROPS = {
     straight: [
         { key: "length", label: "Length", kind: "length", min: 1, max: 200 },
@@ -44,7 +44,7 @@ export const PROPS = {
     ],
     turn: [
         LEAD_IN, LEAD_OUT,
-        { key: "angle", label: "Turn angle", kind: "angle", min: 0, max: 180 },
+        { key: "angle", label: "Turn angle", kind: "angle", min: 0, max: 360 },
         { key: "radius", label: "Radius", kind: "length", min: 1, max: 100 },
         { key: "radiusType", label: "Radius type", kind: "choice", choices: ["constant", "changing"],
           labels: ["Constant", "Changing"] },

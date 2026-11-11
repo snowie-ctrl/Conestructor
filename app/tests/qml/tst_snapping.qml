@@ -214,4 +214,15 @@ TestCase {
         lone.elements = lone.elements.filter(e => e.id !== "e3")
         compare(Snapping.findGroupSnap(lone.elements, shifted(lone, ["e1", "e2"], 1, 1), 15), null)
     }
+
+    // A full loop with no leads has both ends on one spot: it must never join itself.
+    function test_aLoopNeverJoinsItself() {
+        const loop = el("e1", "turn", { angle: 360, leadIn: 0, leadOut: 0 })
+        const ends = Elements.endsWorld(loop)
+        verify(Math.hypot(ends.A.x - ends.B.x, ends.A.y - ends.B.y) < 1e-6, "both ends on one spot")
+        compare(Snapping.findSnap([loop], loop, 5), null)
+        Snapping.joinTouching([loop], "e1")
+        compare(loop.joins.A, null)
+        compare(loop.joins.B, null)
+    }
 }

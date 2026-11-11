@@ -286,4 +286,30 @@ TestCase {
         near(g.ends.B.x - g.ends.A.x, 0, 1e-3, "level with the entry")
         near(g.ends.B.y - g.ends.A.y, 12, 1e-3, "exactly a 12 m diameter")
     }
+
+    function test_aTurnGoesUpToAFullCircle() {
+        const full = Elements.clampProp("turn", "angle", 360)
+        compare(full.value, 360)
+        verify(!full.clamped)
+        compare(Elements.clampProp("turn", "angle", 400).value, 360)
+    }
+
+    function test_aFullLoopLeavesTheWayItCameIn() {
+        const g = Elements.geometry("turn", Object.assign(Elements.defaults("turn"), { angle: 360 }))
+        fuzzyCompare(g.ends.B.heading, 0, 1e-9)
+        fuzzyCompare(g.ends.B.x - g.ends.A.x, 12, 1e-6)      // lead-in 6 m and lead-out 6 m along the entry line
+        fuzzyCompare(g.ends.B.y - g.ends.A.y, 0, 1e-6)
+    }
+
+    function test_aFullLoopReversesInPlace() {
+        const el = { id: "e1", type: "turn", x: 10, y: 20, rotation: 30,
+                     props: Object.assign(Elements.defaults("turn"), { angle: 360, leadOut: 2 }), joins: { A: null, B: null } }
+        const r = Object.assign({}, el, Elements.reversed(el))
+        const before = Elements.endsWorld(el)
+        const after = Elements.endsWorld(r)
+        fuzzyCompare(after.A.x, before.B.x, 1e-6)
+        fuzzyCompare(after.A.y, before.B.y, 1e-6)
+        fuzzyCompare(after.B.x, before.A.x, 1e-6)
+        fuzzyCompare(after.B.y, before.A.y, 1e-6)
+    }
 }
