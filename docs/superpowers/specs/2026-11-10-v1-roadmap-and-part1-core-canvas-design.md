@@ -30,7 +30,7 @@ example) may read its track files.
 | Cone density | A track slider with five notches, default **SAE standard** (notch 3); per-element override; an "Outside cones" switch on turns; a "Cones we own" budget with a live count in the status bar. |
 | Car outline | A true-size rectangle (dimensions in Preferences), optionally showing a top-down car image scaled inside it. Never exported or counted. |
 | Setup | A checklist in the side panel (photo, ruler, Origin, Direction) that unlocks the element palette. |
-| Rulebook | Defaults and warnings follow the rulebook. Read so far: Formula Student Rules 2026 v1.1, D 6.1.1 (autocross): straights at most 80 m, slalom cones 7.5 m to 12 m apart in a line, track at least 3 m wide, turning diameter at least 9 m. The US FSAE 2026 figures are still to be confirmed from the owner's copy before part 3. |
+| Rulebook | Not applied to elements (decided in part 3's brainstorm, 2026-11-11): people design however they like, and there are no rule warnings. The FSAE rules give no cone spacing; today's spacing already meets the SCCA course-design guidance (gaps at least about 3 track widths) and becomes part 4's notch 3, "SAE standard". |
 
 ## Roadmap
 
@@ -43,28 +43,34 @@ Each part gets its own spec, plan and build, in its own session, on its own bran
    the schema; unsaved-changes warning; window title with the track name; the JSON export replaced by `.cone`. From
    the owner's part 1 check: arrows through each element showing the direction of travel; an element's rotation
    typed in the panel; Ctrl+click to select several elements, with the panel showing and changing the settings they
-   share (track width, for example). The `.cone` format leaves room for part 3's hand-edited cones.
-3. **Cones.** Density notches and per-element overrides, outside cones on turns, the cone budget, spacing checked
-   against the rulebook, rule warnings (advice only, a small ⚠ on the element), the car outline and the Tools menu.
-   From the owner's part 1 check: turns from 0° to 360° (one element for a full circle, so a skidpad figure 8 is
-   two turns); a line tool for straight rows of cones (boundaries and walls); after Place cones, deleting single cones
-   and changing a cone's type and pointing direction, which re-processing replaces; the cone count shown as n/m
-   against the cones the team owns (Preferences), red when over. Deferred from part 2's final review: a hand-edited
-   `.cone` with a self-join, an element id of `ruler`/`origin`/`direction`, or joined ends far apart should be refused
-   or repaired on open; after "Don't save" and a cancelled or refused Open, the still-unsaved track should be backed
-   up again; a relative path on the command line should be stored as absolute; the direction arrows should not be
-   rebuilt on every edit (drag performance on 30–40 element courses); a long track name should wrap in the
-   unsaved-changes question; Save As should start in the open track's folder with its name; a backup that cannot be
-   read should not be offered again at every start.
-4. **Team server.** `server/` in the repo (moved from `coneRoutes.py`): multi-team tables, team keys, HTTP upload of a
+   share (track width, for example). The `.cone` format leaves room for part 4's hand-edited cones.
+3. **Easier to use** (spec `2026-11-11-part3-ease-of-use-design.md`; split from the old part 3 after teammates tried
+   the app). A coach card guiding setup; click-to-place as well as dragging, the ruler by two clicks; gate nodes that
+   pivot and stretch an element; a fold check (⚠) and cones on the driving surface left out. From the owner's part 1
+   check: turns from 0° to 360° (one element for a full circle, so a skidpad figure 8 is two turns); a line tool for
+   straight rows of cones (boundaries and walls). Deferred from part 2's final review: a hand-edited `.cone` with a
+   self-join, an element id of `ruler`/`origin`/`direction`, or joined ends far apart should be refused or repaired on
+   open; after "Don't save" and a cancelled or refused Open, the still-unsaved track should be backed up again; a
+   relative path on the command line should be stored as absolute; the direction arrows should not be rebuilt on every
+   edit (drag performance on 30–40 element courses); a long track name should wrap in the unsaved-changes question;
+   Save As should start in the open track's folder with its name; a backup that cannot be read should not be offered
+   again at every start.
+4. **Cones.** Density notches (today's spacing is notch 3, "SAE standard") and per-element overrides, outside cones on
+   turns, the cone budget, the car outline and the Tools menu. From the owner's part 1 check: after Place cones,
+   deleting single cones and changing a cone's type and pointing direction; the cone count shown as n/m against the
+   cones the team owns (Preferences), red when over.
+5. **Team server.** `server/` in the repo (moved from `coneRoutes.py`): multi-team tables, team keys, HTTP upload of a
    `.cone` file with a small thumbnail, a team track list and download; nginx for the subdomain passing only
    `/api/cone/`; a LAN-only admin prefix for deleting tracks and adding team keys; Preferences › Team (team code);
    File › Open gains a Team tracks list; Upload to team.
-5. **Release v1.0.0.** Release script (`windeployqt`, MSVC runtime), packaged zip checked on a clean PATH, README for
+6. **Release v1.0.0.** Release script (`windeployqt`, MSVC runtime), packaged zip checked on a clean PATH, README for
    new members, sponsors and employers (purpose, the pipeline, a getting-started walk-through with screenshots, the
    file format), the GitHub release and tag.
 
 The mobile app is out of scope for v1 and lives on its own branch later.
+
+Parts were renumbered on 2026-11-11 when part 3 was split. In the part 1 design below, "part 3" means part 4 (cones),
+"part 4" means part 5 (team server), and the rulebook warnings it mentions were dropped.
 
 ## Part 1: core canvas
 
