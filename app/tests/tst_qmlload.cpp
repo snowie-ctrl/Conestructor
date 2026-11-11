@@ -784,6 +784,58 @@ private slots:
                                   Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(dir.filePath(QStringLiteral("notes.txt"))))));
         QCOMPARE(findBanner(window)->property("text").toString(), QStringLiteral("Drop a .cone track or a PNG or JPG photo."));
     }
+    // The checklist ticks each step; the track tiles unlock with all four and lock again when one comes undone.
+    void theChecklistUnlocksTheTrackPieces()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto *canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        auto *checklist = window->findChild<QQuickItem *>(QStringLiteral("setupChecklist"));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QVERIFY(canvas && checklist && store);
+        QTRY_VERIFY(canvas->property("fitPending").toBool() == false);
+        auto count = [&]() { return qvariant_cast<QJSValue>(checklist->property("status")).property("count").toInt(); };
+        auto tile = [&](const QString &kind) -> QQuickItem * {
+            for (QQuickItem *item : allItems(window->contentItem()))
+                if (QByteArray(item->metaObject()->className()).startsWith("PaletteTile")
+                    && item->property("kind").toString() == kind)
+                    return item;
+            return nullptr;
+        };
+        QVERIFY(tile(QStringLiteral("straight")) && tile(QStringLiteral("ruler")));
+        QCOMPARE(count(), 0);
+        QVERIFY(!tile(QStringLiteral("straight"))->property("usable").toBool());
+
+        QQuickItem *blueprint = findButton(window, QStringLiteral("Use the blueprint"));
+        QVERIFY(blueprint);
+        QTest::mouseClick(window, Qt::LeftButton, {},
+                          blueprint->mapToScene(QPointF(blueprint->width() / 2, blueprint->height() / 2)).toPoint());
+        QCOMPARE(count(), 1);
+
+        QVariantMap ruler{ { "a", QVariantMap{ { "x", 100 }, { "y", 100 } } },
+                           { "b", QVariantMap{ { "x", 300 }, { "y", 100 } } }, { "realLength", 20 } };
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("setRuler")), Q_ARG(QVariant, ruler));
+        QMetaObject::invokeMethod(canvas, "beginPlacing", Q_ARG(QVariant, QStringLiteral("origin")));
+        QMetaObject::invokeMethod(canvas, "finishPlacing", Q_ARG(QVariant, 300.0), Q_ARG(QVariant, 300.0));
+        QCOMPARE(count(), 3);
+        QVERIFY(!tile(QStringLiteral("straight"))->property("usable").toBool());
+        QMetaObject::invokeMethod(canvas, "beginPlacing", Q_ARG(QVariant, QStringLiteral("direction")));
+        QMetaObject::invokeMethod(canvas, "finishPlacing", Q_ARG(QVariant, 700.0), Q_ARG(QVariant, 300.0));
+        QCOMPARE(count(), 4);
+        QVERIFY(tile(QStringLiteral("straight"))->property("usable").toBool());
+        QVERIFY(!tile(QStringLiteral("ruler"))->property("usable").toBool());       // one ruler per track
+        QVERIFY(checklist->property("done").toBool());
+        QVERIFY(!checklist->property("open").toBool());                               // folded to one line
+
+        // A step that comes undone locks the track tiles again and unfolds the list.
+        QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QStringLiteral("direction")));
+        QMetaObject::invokeMethod(store, "deleteSelected");
+        QCOMPARE(count(), 3);
+        QVERIFY(!tile(QStringLiteral("straight"))->property("usable").toBool());
+        QVERIFY(checklist->property("open").toBool());
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

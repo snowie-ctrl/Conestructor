@@ -335,6 +335,14 @@ ApplicationWindow {
                 anchors.margins: 10
                 spacing: 12
 
+                SetupChecklist {
+                    objectName: "setupChecklist"
+                    canvas: canvasView
+                    Layout.fillWidth: true
+                    onLoadPhoto: photoDialog.open()
+                    onUseBlueprint: window.useBlueprint()
+                }
+
                 ElementPalette {
                     canvas: canvasView
                     Layout.fillWidth: true
