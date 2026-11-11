@@ -31,7 +31,8 @@ TestCase {
     function test_everyCommandUndoesAndRedoesExactly_data() {
         return [
             { tag: "new track", name: "newTrack", args: {} },
-            { tag: "load photo", name: "setPhoto", args: { path: "file:///C:/lots/lot.png" } },
+            { tag: "load photo", name: "setPhoto", args: { kind: "image", ref: 3 } },
+            { tag: "use the blueprint", name: "setPhoto", args: { kind: "blueprint" } },
             { tag: "drag a ruler end", name: "setRuler", args: { a: { x: 0, y: 0 }, b: { x: 200, y: 0 }, realLength: 10 } },
             { tag: "type a ruler length", name: "setRuler", args: { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 12 } },
             { tag: "place Direction", name: "setTarget", args: { which: "direction", point: { x: 500, y: 10 } } },
@@ -75,7 +76,8 @@ TestCase {
             ["duplicate", { id: "e1" }, "Duplicate Straight"],
             ["remove", { id: "e3" }, "Delete Straight"],
             ["setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 11 }, "Set ruler"],
-            ["setPhoto", { path: "file:///x.png" }, "Load photo"],
+            ["setPhoto", { kind: "image", ref: 1 }, "Load photo"],
+            ["setPhoto", { kind: "blueprint" }, "Use blueprint"],
             ["newTrack", {}, "New track"]
         ]
         for (const [name, args, label] of steps) {
@@ -88,9 +90,17 @@ TestCase {
     function test_nothingChangedRecordsNothing() {
         const stack = new Commands.UndoStack()
         const t = base()
-        const same = Commands.run(stack, t, "setPhoto", { path: "" })
+        const same = Commands.run(stack, t, "setPhoto", { kind: "none" })
         verify(same === t)
         verify(!stack.canUndo())
+    }
+
+    function test_aPhotoIsOnlyItsRef() {
+        const t = Commands.run(new Commands.UndoStack(), base(), "setPhoto", { kind: "image", ref: 7 })
+        compare(JSON.stringify(t.photo), JSON.stringify({ kind: "image", ref: 7, metresPerPixel: 0.1 }))
+        const b = Commands.run(new Commands.UndoStack(), t, "setPhoto", { kind: "blueprint", ref: 7 })
+        compare(b.photo.ref, null)
+        compare(JSON.stringify(Commands.emptyTrack().photo), JSON.stringify({ kind: "none", ref: null, metresPerPixel: 0 }))
     }
 
     function test_typingIntoOneFieldIsOneStep() {

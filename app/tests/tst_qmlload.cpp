@@ -1,5 +1,6 @@
 #include <QQmlApplicationEngine>
 #include <QFile>
+#include <QImage>
 #include <QJSValue>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -18,23 +19,41 @@
 
 Q_IMPORT_QML_PLUGIN(ConestructorPlugin)
 
+// Every item drawn under `root` (Repeater delegates have no QObject parent, so findChildren misses them).
+static QList<QQuickItem *> allItems(QQuickItem *root)
+{
+    QList<QQuickItem *> out;
+    for (QQuickItem *child : root->childItems()) {
+        out << child;
+        out << allItems(child);
+    }
+    return out;
+}
+
+static QQuickItem *findBanner(QQuickWindow *window)
+{
+    for (QQuickItem *item : allItems(window->contentItem()))
+        if (QByteArray(item->metaObject()->className()).startsWith("ErrorBanner"))
+            return item;
+    return nullptr;
+}
+
+// A visible button with this text (dialog buttons included: the overlay is under the content item).
+static QQuickItem *findButton(QQuickWindow *window, const QString &text)
+{
+    for (QQuickItem *item : allItems(window->contentItem()))
+        if (item->isVisible() && item->property("text").toString() == text
+            && QByteArray(item->metaObject()->className()).contains("Button"))
+            return item;
+    return nullptr;
+}
+
 // Loads the real window offscreen. Any warning from QML (a broken binding, a missing property) fails the run.
 class TestQmlLoad : public QObject
 {
     Q_OBJECT
 
     QTemporaryDir dir;
-
-    // Every item drawn under `root` (Repeater delegates have no QObject parent, so findChildren misses them).
-    static QList<QQuickItem *> allItems(QQuickItem *root)
-    {
-        QList<QQuickItem *> out;
-        for (QQuickItem *child : root->childItems()) {
-            out << child;
-            out << allItems(child);
-        }
-        return out;
-    }
 
 private slots:
     void initTestCase()
@@ -478,6 +497,52 @@ private slots:
         const QVariantMap joins = element(QStringLiteral("e2")).value("joins").toMap();
         QVERIFY(!joins.value("A").isNull());
         QVERIFY(!joins.value("B").isNull());
+    }
+    // A lot photo loads through PhotoStore as one undo step; something that is not a picture leaves it alone.
+    void aLotPhotoLoadsAndUndoes()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QObject *photos = engine.singletonInstance<QObject *>("Conestructor", "PhotoStore");
+        auto *photo = window->findChild<QQuickItem *>(QStringLiteral("photo"));
+        QVERIFY(store && photos && photo);
+        auto kind = [&]() {
+            return qvariant_cast<QJSValue>(store->property("track")).property("photo").property("kind").toString();
+        };
+
+        QImage image(200, 100, QImage::Format_RGB32);
+        image.fill(Qt::darkGreen);
+        const QString path = dir.filePath(QStringLiteral("lot.png"));
+        QVERIFY(image.save(path));
+        QMetaObject::invokeMethod(window, "loadPhoto", Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(path))));
+        QCOMPARE(kind(), QStringLiteral("image"));
+        QVERIFY(photo->property("source").toString().startsWith(QStringLiteral("image://photo/")));
+        QTRY_COMPARE(photo->property("status").toInt(), 1);          // Image.Ready
+        QCOMPARE(photo->property("implicitWidth").toDouble(), 200.0);
+        QCOMPARE(store->property("undoLabel").toString(), QStringLiteral("Load photo"));
+
+        QFile notes(dir.filePath(QStringLiteral("notes.png")));
+        QVERIFY(notes.open(QIODevice::WriteOnly));
+        notes.write("hello");
+        notes.close();
+        QMetaObject::invokeMethod(window, "loadPhoto", Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(notes.fileName()))));
+        QCOMPARE(findBanner(window)->property("text").toString(),
+                 QStringLiteral("Could not open that photo. The background is unchanged."));
+        QCOMPARE(store->property("undoLabel").toString(), QStringLiteral("Load photo"));
+
+        // A bundled picture loads through its qrc: URL (the Backgrounds menu does this).
+        QVariantMap loaded;
+        QVERIFY(QMetaObject::invokeMethod(photos, "load", Q_RETURN_ARG(QVariantMap, loaded),
+                                          Q_ARG(QString, QStringLiteral("qrc:/qt/qml/Conestructor/assets/images/blueprintBackground.png"))));
+        QVERIFY(loaded.value(QStringLiteral("ref")).toInt() > 0);
+
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(kind(), QStringLiteral("none"));
+        QCOMPARE(photo->property("source").toString(),
+                 QStringLiteral("qrc:/qt/qml/Conestructor/assets/images/blueprintBackground.png"));
     }
 };
 

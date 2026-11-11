@@ -21,7 +21,11 @@ Item {
     readonly property var view: ({ zoom: canvas.zoom, panX: canvas.panX, panY: canvas.panY })
     readonly property real mpp: TrackStore.mpp
     readonly property string blueprint: "qrc:/qt/qml/Conestructor/assets/images/blueprintBackground.png"
-    readonly property string photoPath: TrackStore.track.photo.path
+    // The lot photo from PhotoStore, or the blueprint when there is none.
+    readonly property string photoSource: {
+        const p = TrackStore.track.photo
+        return p.kind === "image" && p.ref !== null ? PhotoStore.url(p.ref) : blueprint
+    }
     property bool fitPending: true
     property bool spaceHeld: false
     property var hover: null          // the photo pixel under the cursor, or null
@@ -32,7 +36,7 @@ Item {
     property string placingKind: ""   // a palette tile being dragged: a track type, "ruler", "origin" or "direction"
     property var ghost: null          // the track element being placed, as it would land
 
-    onPhotoPathChanged: fitPending = true
+    onPhotoSourceChanged: fitPending = true
     onWidthChanged: tryFit()
     onHeightChanged: tryFit()
 
@@ -303,7 +307,8 @@ Item {
 
         Image {
             id: photo
-            source: canvas.photoPath !== "" ? canvas.photoPath : canvas.blueprint
+            objectName: "photo"
+            source: canvas.photoSource
             asynchronous: true
             smooth: true
             mipmap: true

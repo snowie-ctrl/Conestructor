@@ -37,7 +37,8 @@ public:
         int next = 1;
     };
 
-    explicit PhotoStore(QObject *parent = nullptr);
+    // No default parent: Qt prefers a default constructor over create(), and the provider must be registered.
+    explicit PhotoStore(QObject *parent);
     // QML creates the store through this, which also registers image://photo/ with that engine.
     static PhotoStore *create(QQmlEngine *engine, QJSEngine *);
 

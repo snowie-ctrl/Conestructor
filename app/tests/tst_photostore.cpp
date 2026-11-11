@@ -33,7 +33,7 @@ private slots:
     void aPngLoadsWithItsBytesAndSize()
     {
         const QString path = picture(QStringLiteral("lot.png"), "PNG", QSize(40, 30));
-        PhotoStore store;
+        PhotoStore store(nullptr);
         const QVariantMap r = store.load(path);
         QVERIFY2(!r.contains(QStringLiteral("error")), qPrintable(r.value(QStringLiteral("error")).toString()));
         const int ref = r.value(QStringLiteral("ref")).toInt();
@@ -49,7 +49,7 @@ private slots:
     void aJpegLoadsFromAFileUrl()
     {
         const QString path = picture(QStringLiteral("lot.jpg"), "JPEG", QSize(32, 24));
-        PhotoStore store;
+        PhotoStore store(nullptr);
         const QVariantMap r = store.load(QUrl::fromLocalFile(path).toString());
         const int ref = r.value(QStringLiteral("ref")).toInt();
         QVERIFY(ref > 0);
@@ -59,7 +59,7 @@ private slots:
 
     void theProviderServesThePicture()
     {
-        PhotoStore store;
+        PhotoStore store(nullptr);
         const int ref = store.add(bytesOf(picture(QStringLiteral("p.png"), "PNG", QSize(16, 8))));
         PhotoProvider provider(store.shelf());
         QSize size;
@@ -71,7 +71,7 @@ private slots:
 
     void somethingElseIsRefused()
     {
-        PhotoStore store;
+        PhotoStore store(nullptr);
         QCOMPARE(store.add(QByteArray("not a picture")), -1);
         QFile notes(dir.filePath(QStringLiteral("notes.png")));
         QVERIFY(notes.open(QIODevice::WriteOnly));
@@ -84,7 +84,7 @@ private slots:
 
     void refsAreNeverReusedAndClearKeepsOne()
     {
-        PhotoStore store;
+        PhotoStore store(nullptr);
         const QByteArray png = bytesOf(picture(QStringLiteral("c.png"), "PNG", QSize(4, 4)));
         const int a = store.add(png);
         const int b = store.add(png);

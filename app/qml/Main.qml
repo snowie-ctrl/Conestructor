@@ -33,8 +33,19 @@ ApplicationWindow {
         canvasView.tryFit()
     }
 
-    function setBackground(path) {
-        TrackStore.run("setPhoto", { path: path })
+    // Loads a lot photo (a file dialog's URL, a path or a qrc: URL) as one undo step; a banner if it can't be read.
+    function loadPhoto(url) {
+        const r = PhotoStore.load(url.toString())
+        if (r.error) {
+            TrackStore.report(r.error, null)
+            return
+        }
+        TrackStore.run("setPhoto", { kind: "image", ref: r.ref })
+        TrackStore.seal()
+    }
+
+    function useBlueprint() {
+        TrackStore.run("setPhoto", { kind: "blueprint" })
         TrackStore.seal()
     }
 
@@ -135,13 +146,13 @@ ApplicationWindow {
             Menu {
                 id: backgroundsMenu
                 title: qsTr("Backgrounds")
-                MenuItem { text: qsTr("Blueprint"); onTriggered: window.setBackground("") }
+                MenuItem { text: qsTr("Blueprint"); onTriggered: window.useBlueprint() }
                 Instantiator {
                     model: AppInfo.localBackgrounds
                     delegate: MenuItem {
                         required property string modelData
                         text: window.backgroundName(modelData)
-                        onTriggered: window.setBackground("qrc:/qt/qml/Conestructor/assets/images/" + modelData + ".png")
+                        onTriggered: window.loadPhoto("qrc:/qt/qml/Conestructor/assets/images/" + modelData + ".png")
                     }
                     onObjectAdded: (index, object) => backgroundsMenu.insertItem(index + 1, object)
                     onObjectRemoved: (index, object) => backgroundsMenu.removeItem(object)
@@ -223,7 +234,7 @@ ApplicationWindow {
         id: photoDialog
         title: qsTr("Load lot photo")
         nameFilters: [qsTr("Photos (*.png *.jpg *.jpeg)")]
-        onAccepted: probe.check(selectedFile)
+        onAccepted: window.loadPhoto(selectedFile)
     }
 
     FileDialog {
@@ -237,30 +248,4 @@ ApplicationWindow {
     }
 
     PreferencesDialog { id: preferences }
-
-    // Tries a chosen photo before it replaces the background, so one that fails to load leaves the old one.
-    Image {
-        id: probe
-        visible: false
-        asynchronous: false
-        sourceSize: Qt.size(64, 64)
-        property string pending: ""
-
-        function check(url) {
-            source = ""
-            pending = url.toString()
-            source = url
-        }
-
-        onStatusChanged: {
-            if (pending === "" || (status !== Image.Ready && status !== Image.Error))
-                return
-            if (status === Image.Ready)
-                window.setBackground(pending)
-            else
-                TrackStore.report(qsTr("Could not open that photo. The background is unchanged."), null)
-            pending = ""
-            Qt.callLater(() => { probe.source = "" })
-        }
-    }
 }

@@ -1,5 +1,6 @@
 // The track, and every edit to it. A track is plain data:
-//   { photo: { path, metresPerPixel },             path "" means the blueprint; metresPerPixel comes from the ruler
+//   { photo: { kind, ref, metresPerPixel },  kind "none" (not chosen), "blueprint" or "image"; ref a PhotoStore id
+//                                            (image only, else null); metresPerPixel comes from the ruler
 //     ruler: null | { a: {x, y}, b: {x, y}, realLength },   ends in photo pixels, realLength in metres (0 = not set)
 //     targets: { origin: null | {x, y}, direction: null | {x, y} },  photo pixels
 //     elements: [ { id, type, x, y, rotation, props, joins: { A: null | {id, end}, B: ... } } ],  canvas metres
@@ -10,7 +11,7 @@ import * as Elements from "./elements.mjs"
 import * as Snapping from "./snapping.mjs"
 
 export function emptyTrack() {
-    return { photo: { path: "", metresPerPixel: 0 }, ruler: null, targets: { origin: null, direction: null },
+    return { photo: { kind: "none", ref: null, metresPerPixel: 0 }, ruler: null, targets: { origin: null, direction: null },
              elements: [], nextId: 1 }
 }
 
@@ -50,7 +51,8 @@ const COMMANDS = {
         return emptyTrack()
     },
     setPhoto(t, a) {
-        t.photo.path = a.path || ""
+        t.photo.kind = a.kind
+        t.photo.ref = a.kind === "image" ? a.ref : null
         return t
     },
     setRuler(t, a) {
@@ -134,7 +136,7 @@ export function label(track, name, a) {
     }
     switch (name) {
     case "newTrack": return "New track"
-    case "setPhoto": return "Load photo"
+    case "setPhoto": return a.kind === "blueprint" ? "Use blueprint" : "Load photo"
     case "setRuler": return "Set ruler"
     case "removeRuler": return "Delete ruler"
     case "setTarget":

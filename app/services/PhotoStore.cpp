@@ -34,7 +34,7 @@ PhotoStore::PhotoStore(QObject *parent) : QObject(parent), m_shelf(std::make_sha
 
 PhotoStore *PhotoStore::create(QQmlEngine *engine, QJSEngine *)
 {
-    auto *store = new PhotoStore;
+    auto *store = new PhotoStore(nullptr);
     engine->addImageProvider(QStringLiteral("photo"), new PhotoProvider(store->shelf()));
     return store;
 }
