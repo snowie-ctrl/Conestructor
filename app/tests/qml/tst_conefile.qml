@@ -146,4 +146,56 @@ TestCase {
         const found = SchemaCheck.problems(schema, bad)
         compare(found.length, 2, found.join("; "))
     }
+
+    // Two straights joined e1.B - e2.A, as a document to edit by hand.
+    function joinedDoc() {
+        const s = new Commands.UndoStack()
+        let t = Commands.emptyTrack()
+        t = Commands.run(s, t, "setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 10 })
+        t = Commands.run(s, t, "add", { type: "straight", x: 10, y: 5 })
+        t = Commands.run(s, t, "add", { type: "straight", x: 0, y: 0, snap: { ownEnd: "A", id: "e1", end: "B" } })
+        return doc(t)
+    }
+
+    function test_selfJoinsAndReservedIdsAreDamaged() {
+        const self = joinedDoc()
+        self.design.elements[0].joins.A = { id: "e1", end: "A" }
+        compare(ConeFile.fromDocument(self, -1).error, ConeFile.MESSAGES.damaged)
+        for (const id of ["ruler", "origin", "direction"]) {
+            const d = joinedDoc()
+            d.design.elements[0].id = id
+            d.design.elements[1].joins.A = { id: id, end: "B" }
+            compare(ConeFile.fromDocument(d, -1).error, ConeFile.MESSAGES.damaged, id)
+        }
+    }
+
+    function test_joinedEndsApartAreUnjoined() {
+        const apart = joinedDoc()
+        apart.design.elements[1].x += 1
+        const t = ConeFile.fromDocument(apart, -1).track
+        compare(t.elements[0].joins.B, null)
+        compare(t.elements[1].joins.A, null)
+        const close = joinedDoc()
+        close.design.elements[1].x += 0.01
+        compare(ConeFile.fromDocument(close, -1).track.elements[0].joins.B.id, "e2")
+    }
+
+    function test_aJoinToALineIsDropped() {
+        const d = joinedDoc()
+        d.design.elements[1].type = "line"
+        d.design.elements[1].props = { length: 20, spacing: 3 }
+        const t = ConeFile.fromDocument(d, -1).track
+        compare(t.elements[0].joins.B, null)
+        compare(t.elements[1].joins.A, null)
+    }
+
+    function test_aLineRoundTripsAndItsConesComeLast() {
+        let t = Demo.demoTrack()
+        t = Commands.run(new Commands.UndoStack(), t, "add",
+                         { type: "line", x: 120, y: 68, rotation: 30, props: { length: 12, spacing: 2 } })
+        const d = doc(t)
+        compare(JSON.stringify(ConeFile.fromDocument(d, -1).track), JSON.stringify(t))
+        compare(d.cones.filter(c => c.element === "e5").length, 7)
+        compare(d.cones.slice(-7).map(c => c.element).join(","), "e5,e5,e5,e5,e5,e5,e5")
+    }
 }

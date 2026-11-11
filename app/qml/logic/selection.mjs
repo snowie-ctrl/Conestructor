@@ -47,7 +47,7 @@ function segmentMeetsRect(a, b, r) {
 export function boxHits(elements, cornerA, cornerB) {
     const out = []
     for (const el of elements) {
-        const h = el.props.trackWidth / 2
+        const h = Elements.reach(el)
         const r = { x0: Math.min(cornerA.x, cornerB.x) - h, y0: Math.min(cornerA.y, cornerB.y) - h,
                     x1: Math.max(cornerA.x, cornerB.x) + h, y1: Math.max(cornerA.y, cornerB.y) + h }
         const path = Elements.pathWorld(el)

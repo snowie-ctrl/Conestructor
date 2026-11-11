@@ -1,9 +1,12 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Shapes
 import Conestructor
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
+import "logic/nodes.mjs" as Nodes
 import "logic/selection.mjs" as Selection
+import "logic/setup.mjs" as Setup
 import "logic/snapping.mjs" as Snapping
 import "logic/units.mjs" as Units
 import "logic/viewport.mjs" as Viewport
@@ -36,14 +39,41 @@ Item {
     property string gestureKey: ""
     property string placingKind: ""   // a palette tile being dragged: a track type, "ruler", "origin" or "direction"
     property var ghost: null          // the track element being placed, as it would land
+    property string placingBy: ""     // "drag": a tile is being dragged; "click": picked up, the next click puts it down
+    property var placingPoint: null   // the photo pixel under the mouse while placing the ruler or a target
+    property var rulerFirst: null     // the ruler's first end, once clicked
+    property bool lengthBoxOpen: false
+    // A track piece in hand is dropped when setup comes undone (the track tiles lock again).
+    readonly property bool setupDone: Setup.status(TrackStore.track).done
+    onSetupDoneChanged: if (!setupDone && Elements.TYPES.indexOf(placingKind) >= 0) cancelPlacing()
+
+    // A tile in hand, a ruler's first click or the length box belong to the track they were started on.
+    Connections {
+        target: TrackStore
+        function onTrackReplaced() {
+            canvas.cancelPlacing()
+            canvas.lengthBoxOpen = false
+        }
+    }
+    // The ruler as it would land: between the first click and the mouse, or (dragged) 160 screen pixels centred there.
+    readonly property var rulerGhost: {
+        const p = placingPoint
+        if (placingKind !== "ruler" || p === null)
+            return null
+        if (rulerFirst)
+            return { a: rulerFirst, b: p }
+        const half = placingBy === "drag" ? 80 / zoom : 0
+        return { a: { x: p.x - half, y: p.y }, b: { x: p.x + half, y: p.y } }
+    }
     property var box: null            // the selection box being dragged, in screen pixels
+    property var hoverNode: null      // the open end under the mouse ({ id, end }), or null
 
     // The backwards element whose warning is under the cursor ("" when none), for its tip.
     readonly property string hoverWarning: {
         if (!hover || !(mpp > 0))
             return ""
         const h = toScreen(hover.x, hover.y)
-        for (const id of TrackStore.backwardIds) {
+        for (const id of TrackStore.backwardIds.concat(TrackStore.foldedIds)) {
             const el = TrackStore.element(id)
             if (!el)
                 continue
@@ -118,6 +148,21 @@ Item {
         return Math.hypot(a.x - b.x, a.y - b.y)
     }
 
+    // The open end (a gate node) within 10 screen pixels of photo pixel w, topmost element first, or null.
+    function nodeAt(w) {
+        if (!(mpp > 0))
+            return null
+        const list = TrackStore.track.elements
+        for (let i = list.length - 1; i >= 0; i--) {
+            const el = list[i]
+            const ends = Elements.endsWorld(el)
+            for (const end of ["A", "B"])
+                if (!el.joins[end] && distance({ x: ends[end].x / mpp, y: ends[end].y / mpp }, w) < 10 / zoom)
+                    return { kind: "node", id: el.id, end: end }
+        }
+        return null
+    }
+
     // What is under a screen point, most specific first.
     function hitAt(sx, sy) {
         const w = toWorld(sx, sy)
@@ -140,6 +185,9 @@ Item {
             if (p && distance(p, w) < 16 / zoom)
                 return { kind: "target", which: which }
         }
+        const node = nodeAt(w)
+        if (node)
+            return node
         if (mpp > 0) {
             const id = Elements.hitTest(t.elements, { x: w.x * mpp, y: w.y * mpp }, 4 / zoom * mpp)
             if (id !== "")
@@ -150,9 +198,68 @@ Item {
         return null
     }
 
+    // What an element's warning says: driven backwards, folding in on itself, or both (one line each).
+    function warningText(id) {
+        const el = TrackStore.element(id)
+        if (!el)
+            return ""
+        const lines = []
+        if (TrackStore.backwardIds.indexOf(id) >= 0)
+            lines.push(qsTr("Runs against the track: right-click › Reverse direction"))
+        const fold = Elements.foldAdvice(el, m => Units.format(m, Settings.units))
+        if (fold !== "")
+            lines.push(fold)
+        return lines.join("
+")
+    }
+
+    // A tile dragged onto the canvas.
     function beginPlacing(kind) {
+        cancelPlacing()
         placingKind = kind
+        placingBy = "drag"
+    }
+
+    // A tile clicked: it is picked up and follows the mouse until a canvas click puts it down.
+    function pickUp(kind) {
+        cancelPlacing()
+        placingKind = kind
+        placingBy = "click"
+        canvas.forceActiveFocus()
+        TrackStore.message = placingHint(kind)
+    }
+
+    // Clicking the tile that is picked up drops it; any other tile is picked up instead.
+    function clickTile(kind) {
+        if (placingBy === "click" && placingKind === kind)
+            cancelPlacing()
+        else
+            pickUp(kind)
+    }
+
+    function cancelPlacing() {
+        if (placingBy === "click")
+            TrackStore.message = ""
+        placingKind = ""
+        placingBy = ""
         ghost = null
+        placingPoint = null
+        rulerFirst = null
+    }
+
+    function placingHint(kind) {
+        if (kind === "ruler")
+            return rulerFirst ? qsTr("Click the other end · Esc to cancel")
+                              : qsTr("Click one end of something you know the length of · Esc to cancel")
+        if (kind === "origin")
+            return qsTr("Click where Origin goes · Esc to cancel")
+        if (kind === "direction")
+            return qsTr("Click where Direction goes · Esc to cancel")
+        return qsTr("Click where the %1 goes · Esc to cancel").arg(Elements.NAMES[kind])
+    }
+
+    function openLengthBox() {
+        lengthBoxOpen = true
     }
 
     function insideCanvas(sx, sy) {
@@ -160,7 +267,16 @@ Item {
     }
 
     function updatePlacing(sx, sy, ctrl) {
-        if (Elements.TYPES.indexOf(placingKind) < 0 || !insideCanvas(sx, sy) || !(mpp > 0)) {
+        if (!insideCanvas(sx, sy)) {
+            ghost = null
+            placingPoint = null
+            return
+        }
+        if (Elements.TYPES.indexOf(placingKind) < 0) {
+            placingPoint = toWorld(sx, sy)
+            return
+        }
+        if (!(mpp > 0)) {
             ghost = null
             return
         }
@@ -175,18 +291,42 @@ Item {
         ghost = g
     }
 
+    // A dragged tile let go.
     function finishPlacing(sx, sy) {
         const kind = placingKind
         const g = ghost
-        placingKind = ""
-        ghost = null
-        if (!insideCanvas(sx, sy))
-            return
+        cancelPlacing()
+        if (insideCanvas(sx, sy))
+            putDown(kind, toWorld(sx, sy), g, null)
+    }
+
+    // A canvas click while a tile is picked up. The ruler's first click only sets its first end.
+    function clickPlace(sx, sy, ctrl) {
+        const kind = placingKind
         const w = toWorld(sx, sy)
+        if (kind === "ruler" && !rulerFirst) {
+            rulerFirst = w
+            TrackStore.message = placingHint(kind)
+            return
+        }
+        if (kind === "ruler" && distance(rulerFirst, w) * zoom < 3)
+            return                          // the other end must be somewhere else
+        updatePlacing(sx, sy, ctrl)
+        const g = ghost
+        const ends = kind === "ruler" ? { a: rulerFirst, b: w } : null
+        cancelPlacing()
+        putDown(kind, w, g, ends)
+    }
+
+    // Puts a tile down at photo pixel w. A dragged ruler lands centred there, 160 screen pixels long; a clicked one
+    // between its two clicks. A ruler without a length opens the length box.
+    function putDown(kind, w, g, rulerEnds) {
         if (kind === "ruler") {
             const half = 80 / zoom
-            TrackStore.run("setRuler", { a: { x: w.x - half, y: w.y }, b: { x: w.x + half, y: w.y }, realLength: 0 })
+            const ends = rulerEnds || { a: { x: w.x - half, y: w.y }, b: { x: w.x + half, y: w.y } }
+            TrackStore.run("setRuler", { a: ends.a, b: ends.b, realLength: 0 })
             TrackStore.select("ruler")
+            lengthBoxOpen = true
         } else if (kind === "origin" || kind === "direction") {
             TrackStore.run("setTarget", { which: kind, point: { x: w.x, y: w.y } })
             TrackStore.select(kind)
@@ -210,6 +350,13 @@ Item {
 
     function pressAt(e) {
         canvas.forceActiveFocus()
+        if (placingBy === "click" && (e.button === Qt.LeftButton || e.button === Qt.RightButton)) {
+            if (e.button === Qt.LeftButton)
+                clickPlace(e.x, e.y, (e.modifiers & Qt.ControlModifier) !== 0)
+            else
+                cancelPlacing()
+            return
+        }
         gestureKey = TrackStore.newGestureKey()
         const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
         const shift = (e.modifiers & Qt.ShiftModifier) !== 0
@@ -218,7 +365,10 @@ Item {
             mode = "pan"
             return
         }
-        const hit = hitAt(e.x, e.y)
+        let hit = hitAt(e.x, e.y)
+        // An open end is a gate node only for a plain left press: right-click and Ctrl+click act on its element.
+        if (hit && hit.kind === "node" && (e.button !== Qt.LeftButton || (e.modifiers & Qt.ControlModifier) !== 0))
+            hit = { kind: "element", id: hit.id }
         if (e.button === Qt.RightButton) {
             if (hit && hit.kind === "element") {
                 if (!TrackStore.isSelected(hit.id))
@@ -241,6 +391,14 @@ Item {
             return
         }
         const t = TrackStore.track
+        if (hit.kind === "node") {
+            TrackStore.select(hit.id)
+            press.el = JSON.parse(JSON.stringify(TrackStore.element(hit.id)))
+            press.end = hit.end
+            press.pivot = press.el.joins[hit.end === "A" ? "B" : "A"] === null
+            mode = "node"
+            return
+        }
         if (hit.kind === "element" || hit.kind === "rotate") {
             if (hit.kind === "element" && ctrl) {
                 const removing = TrackStore.isSelected(hit.id)
@@ -270,6 +428,10 @@ Item {
 
     function moveTo(e) {
         hover = toWorld(e.x, e.y)
+        if (!mouse.pressed)
+            hoverNode = placingKind === "" ? nodeAt(hover) : null
+        if (placingBy === "click")
+            updatePlacing(e.x, e.y, (e.modifiers & Qt.ControlModifier) !== 0)
         if (!mouse.pressed || mode === "")
             return
         // Nothing but a pan moves until the pointer has travelled a drag's distance: a click that wobbles a pixel
@@ -300,6 +462,20 @@ Item {
             }
             TrackStore.run("placeMany", { moves: placed.map(p => ({ id: p.id, x: p.x, y: p.y, rotation: p.rotation })),
                                           snap: snap, verb: "Move", mergeKey: gestureKey })
+        } else if (mode === "node") {
+            const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
+            const shift = (e.modifiers & Qt.ShiftModifier) !== 0
+            const w = toWorld(e.x, e.y)
+            let p = { x: w.x * mpp, y: w.y * mpp }
+            if (press.pivot && !ctrl && !shift) {
+                const s = Nodes.snapPoint(TrackStore.track.elements, press.el.id, p, snapMetres())
+                if (s)
+                    p = s
+            }
+            const r = Nodes.drag(press.el, press.end, p, { pivot: press.pivot, step: shift ? 15 : 0,
+                                                           frameTheta: TrackStore.frame ? TrackStore.frame.theta : 0 })
+            TrackStore.run("stretch", { id: press.el.id, x: r.x, y: r.y, rotation: r.rotation, key: r.key, value: r.value,
+                                        mergeKey: gestureKey })
         } else if (mode === "box") {
             box = { x: Math.min(press.sx, e.x), y: Math.min(press.sy, e.y),
                     width: Math.abs(e.x - press.sx), height: Math.abs(e.y - press.sy) }
@@ -341,6 +517,10 @@ Item {
     }
 
     Keys.onPressed: (e) => {
+        if (e.key === Qt.Key_Escape && placingBy !== "") {
+            cancelPlacing()
+            e.accepted = true
+        }
         if (e.key === Qt.Key_Space && !e.isAutoRepeat) {
             spaceHeld = true
             e.accepted = true
@@ -386,6 +566,9 @@ Item {
                 single: TrackStore.selection.length === 1
                 dimmed: TrackStore.previewOn
                 backwards: element !== null && TrackStore.backwardIds.indexOf(element.id) >= 0
+                folded: element !== null && TrackStore.foldedIds.indexOf(element.id) >= 0
+                hoverEnd: element !== null && canvas.hoverNode !== null && canvas.hoverNode.id === element.id
+                          ? canvas.hoverNode.end : ""
             }
         }
         ElementView {
@@ -396,6 +579,48 @@ Item {
         ConePreview { zoom: canvas.zoom }
         RulerView { zoom: canvas.zoom }
         TargetsView { zoom: canvas.zoom }
+
+        // A ruler or target being placed, where it would land.
+        Item {
+            visible: canvas.placingPoint !== null
+            opacity: 0.6
+            Image {
+                visible: canvas.placingKind === "origin" || canvas.placingKind === "direction"
+                source: "qrc:/qt/qml/Conestructor/assets/images/crosshair.svg"
+                width: 32 / canvas.zoom
+                height: width
+                x: canvas.placingPoint ? canvas.placingPoint.x - width / 2 : 0
+                y: canvas.placingPoint ? canvas.placingPoint.y - height / 2 : 0
+                sourceSize: Qt.size(64, 64)
+            }
+            Shape {
+                visible: canvas.rulerGhost !== null
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeColor: "#f5cb42"
+                    strokeWidth: 2 / canvas.zoom
+                    fillColor: "transparent"
+                    startX: canvas.rulerGhost ? canvas.rulerGhost.a.x : 0
+                    startY: canvas.rulerGhost ? canvas.rulerGhost.a.y : 0
+                    PathLine {
+                        x: canvas.rulerGhost ? canvas.rulerGhost.b.x : 0
+                        y: canvas.rulerGhost ? canvas.rulerGhost.b.y : 0
+                    }
+                }
+            }
+            Repeater {
+                model: canvas.rulerGhost ? [canvas.rulerGhost.a, canvas.rulerGhost.b] : []
+                Rectangle {
+                    required property var modelData
+                    width: 12 / canvas.zoom
+                    height: width
+                    radius: width / 2
+                    x: modelData.x - width / 2
+                    y: modelData.y - height / 2
+                    color: "#f5cb42"
+                }
+            }
+        }
     }
 
     // Labels drawn in screen pixels, so text stays sharp and the same size at any zoom.
@@ -420,7 +645,7 @@ Item {
             visible: canvas.hoverWarning !== "" && canvas.hover !== null
             x: canvas.hover ? canvas.toScreen(canvas.hover.x, canvas.hover.y).x + 16 : 0
             y: canvas.hover ? canvas.toScreen(canvas.hover.x, canvas.hover.y).y + 12 : 0
-            text: qsTr("Runs against the track: right-click › Reverse direction")
+            text: canvas.warningText(canvas.hoverWarning)
             color: "#f0f0f0"
             padding: 6
             background: Rectangle { color: "#333333"; radius: 4; border.color: "#ffb300" }
@@ -471,20 +696,28 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-        cursorShape: canvas.mode === "pan" ? Qt.ClosedHandCursor
+        cursorShape: canvas.mode === "node" || (canvas.mode === "" && canvas.hoverNode !== null) ? Qt.CrossCursor
+                     : canvas.mode === "pan" ? Qt.ClosedHandCursor
                      : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" ? Qt.SizeAllCursor
                      : Qt.ArrowCursor
         onPressed: (e) => canvas.pressAt(e)
         onPositionChanged: (e) => canvas.moveTo(e)
         onReleased: (e) => canvas.releaseAt(e)
-        onExited: canvas.hover = null
+        onExited: {
+            canvas.hover = null
+            canvas.hoverNode = null
+        }
         onWheel: (w) => canvas.zoomBy(Math.pow(1.0015, w.angleDelta.y), w.x, w.y)
     }
 
     Menu {
         id: elementMenu
+        objectName: "elementMenu"
         MenuItem { text: qsTr("Duplicate"); onTriggered: TrackStore.duplicateSelected() }
         MenuItem { text: qsTr("Delete"); onTriggered: TrackStore.deleteSelected() }
         MenuItem { text: qsTr("Reverse direction"); onTriggered: TrackStore.reverseSelected() }
     }
+
+    // After the MouseArea, so clicks in the box reach it.
+    RulerLengthBox { canvas: canvas }
 }

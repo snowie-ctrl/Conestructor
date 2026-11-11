@@ -63,8 +63,21 @@ ApplicationWindow {
             then()
     }
 
+    // Where Save As starts: beside the open track, with its name filled in. An Untitled track starts wherever the
+    // dialog was last (null).
+    function saveAsStart() {
+        if (TrackStore.filePath === "")
+            return null
+        return { folder: TrackFile.folderUrl(TrackStore.filePath), file: TrackFile.fileUrl(TrackStore.filePath) }
+    }
+
     function saveAs(then) {
         saveDialog.afterSave = then || null
+        const start = saveAsStart()
+        if (start) {
+            saveDialog.currentFolder = start.folder
+            saveDialog.selectedFile = start.file
+        }
         saveDialog.open()
     }
 
@@ -91,13 +104,13 @@ ApplicationWindow {
     onClosing: (close) => {
         if (closing || !TrackStore.dirty) {
             if (backupAnswered)
-                TrackFile.deleteBackup()
+                TrackStore.deleteBackup()
             return
         }
         close.accepted = false
         whenSaved(() => {
             window.closing = true
-            TrackFile.deleteBackup()
+            TrackStore.deleteBackup()
             window.close()
         })
     }
@@ -135,6 +148,7 @@ ApplicationWindow {
     // Called once by main.cpp when the window opens: offers a backup left by a crash, then opens `file` (the track
     // named on the command line, or "").
     function start(file) {
+        file = TrackFile.absolutePath(file)
         const backup = TrackFile.findBackup()
         if (backup.path) {
             backupAnswered = false
@@ -163,18 +177,15 @@ ApplicationWindow {
             TrackStore.report(qsTr("Drop a .cone track or a PNG or JPG photo."), null)
     }
 
-    // The track text last backed up, so an unchanged track is not written again.
-    property string backedUpText: ""
-
     // Every two minutes: backs up unsaved changes that are not backed up yet. A failed write says nothing (it is a
     // safety net) and is tried again next time.
     function backUp() {
-        if (!TrackStore.dirty || TrackStore.trackText === backedUpText)
+        if (!TrackStore.dirty || TrackStore.trackText === TrackStore.backedUpText)
             return
         const error = TrackFile.writeBackup(TrackStore.documentText(TrackStore.name), TrackStore.photoRef(),
                                             TrackStore.filePath, TrackStore.name)
         if (error === "")
-            backedUpText = TrackStore.trackText
+            TrackStore.backedUpText = TrackStore.trackText
     }
 
     Timer {
@@ -324,10 +335,20 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            ErrorBanner {
-                id: banner
+            CoachCard {
+                id: coach
+                canvas: canvasView
                 anchors.top: parent.top
                 anchors.topMargin: 12
+                anchors.horizontalCenter: parent.horizontalCenter
+                onLoadPhoto: photoDialog.open()
+                onUseBlueprint: window.useBlueprint()
+            }
+
+            ErrorBanner {
+                id: banner
+                anchors.top: coach.visible ? coach.bottom : parent.top
+                anchors.topMargin: coach.visible ? 8 : 12
                 anchors.horizontalCenter: parent.horizontalCenter
                 onShowMe: (target) => canvasView.showTarget(target)
             }
@@ -414,7 +435,12 @@ ApplicationWindow {
         anchors.centerIn: Overlay.overlay
         modal: true
         title: qsTr("Unsaved changes")
-        Label { text: qsTr("Save changes to %1?").arg(TrackStore.name) }
+        Label {
+            objectName: "unsavedQuestion"
+            width: unsavedDialog.availableWidth
+            wrapMode: Text.Wrap
+            text: qsTr("Save changes to %1?").arg(TrackStore.name)
+        }
         footer: DialogButtonBox {
             Button { text: qsTr("Save"); DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
             Button { text: qsTr("Don't save"); DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole }
@@ -424,7 +450,7 @@ ApplicationWindow {
         onDiscarded: {
             const action = window.takePending()
             unsavedDialog.close()
-            TrackFile.deleteBackup()
+            TrackStore.deleteBackup()
             action()
         }
         onRejected: window.pendingAction = null
@@ -452,14 +478,18 @@ ApplicationWindow {
         }
         onAccepted: {
             window.backupAnswered = true
-            if (TrackStore.restoreBackup(backup))
+            if (TrackStore.restoreBackup(backup)) {
                 window.fitSoon()
+            } else {
+                TrackStore.deleteBackup()
+                TrackStore.report(qsTr("The backup couldn't be read and has been removed."), null)
+            }
             window.afterRestoreQuestion(file)
         }
         onDiscarded: {
             window.backupAnswered = true
             restoreDialog.close()
-            TrackFile.deleteBackup()
+            TrackStore.deleteBackup()
             window.afterRestoreQuestion(file)
         }
     }

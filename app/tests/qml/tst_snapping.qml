@@ -214,4 +214,39 @@ TestCase {
         lone.elements = lone.elements.filter(e => e.id !== "e3")
         compare(Snapping.findGroupSnap(lone.elements, shifted(lone, ["e1", "e2"], 1, 1), 15), null)
     }
+
+    // A full loop with no leads has both ends on one spot: it must never join itself.
+    function test_aLoopNeverJoinsItself() {
+        const loop = el("e1", "turn", { angle: 360, leadIn: 0, leadOut: 0 })
+        const ends = Elements.endsWorld(loop)
+        verify(Math.hypot(ends.A.x - ends.B.x, ends.A.y - ends.B.y) < 1e-6, "both ends on one spot")
+        compare(Snapping.findSnap([loop], loop, 5), null)
+        Snapping.joinTouching([loop], "e1")
+        compare(loop.joins.A, null)
+        compare(loop.joins.B, null)
+    }
+
+    function test_linesNeverJoin() {
+        const line = el("e1", "line", {}, 0, 0, 0)               // ends at x -10 and 10
+        const straight = el("e2", "straight", {}, 20.5, 0, 0)    // its A end half a metre from the line's B end
+        compare(Snapping.findSnap([line, straight], straight, 5), null)
+        compare(Snapping.findSnap([line, straight], line, 5), null)
+        const touching = el("e3", "straight", {}, 20, 0, 0)      // its A end on the line's B end
+        const list = [line, touching]
+        Snapping.joinTouching(list, "e3")
+        Snapping.joinTouching(list, "e1")
+        compare(touching.joins.A, null)
+        compare(line.joins.B, null)
+    }
+
+    // Review focus 4: a group with a line in it snaps only by its track elements' ends, and never onto a line.
+    function test_aGroupWithALineSnapsOnlyByItsTrackEnds() {
+        const outside = el("e1", "straight", {}, 0, 0, 0)         // B end at x 10
+        const line = el("e2", "line", {}, 20.3, 0, 0)             // A end at x 10.3
+        const far = el("e3", "straight", {}, 0, 50, 0)
+        compare(Snapping.findGroupSnap([outside, line, far], [line, far], 5), null)
+        const wall = el("e4", "line", {}, 0, 0, 0)                // B end at x 10
+        const near = el("e5", "straight", {}, 20.3, 0, 0)         // A end at x 10.3
+        compare(Snapping.findGroupSnap([wall, near], [near], 5), null)
+    }
 }

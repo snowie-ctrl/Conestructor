@@ -6,14 +6,15 @@
 import * as Rows from "./conerows.mjs"
 import { FOOT } from "./units.mjs"
 
-export const TYPES = ["straight", "slalom", "chicane", "turn"]
-export const NAMES = { straight: "Straight", slalom: "Slalom", chicane: "Chicane", turn: "Turn" }
-export const COLOURS = { straight: "#b603fc", slalom: "#c9691a", chicane: "#1a46c9", turn: "#34eb7a" }
+export const TYPES = ["straight", "slalom", "chicane", "turn", "line"]
+export const NAMES = { straight: "Straight", slalom: "Slalom", chicane: "Chicane", turn: "Turn", line: "Line" }
+export const COLOURS = { straight: "#b603fc", slalom: "#c9691a", chicane: "#1a46c9", turn: "#34eb7a", line: "#c8c8c8" }
 export const TIPS = {
     straight: "Straight: a run between two rows of cones.",
     slalom: "Slalom: a line of cones to weave through.",
     chicane: "Chicane: a sideways step in the track.",
-    turn: "Turn: anything from a sweeper to a hairpin."
+    turn: "Turn: anything from a sweeper to a hairpin.",
+    line: "Line: a straight row of cones, for walls and boundaries."
 }
 
 const WIDTH = { key: "trackWidth", label: "Track width", kind: "length", min: 1, max: 20 }
@@ -21,7 +22,7 @@ const LEAD_IN = { key: "leadIn", label: "Lead-in", kind: "length", min: 0, max: 
 const LEAD_OUT = { key: "leadOut", label: "Lead-out", kind: "length", min: 0, max: 100 }
 const SIDES = { kind: "choice", choices: ["left", "right"], labels: ["Left", "Right"] }
 
-// Physical limits only; the rulebook's limits are part 3's warnings and never block.
+// Physical limits only. The rulebook is not applied to elements: people design however they like (part 3).
 export const PROPS = {
     straight: [
         { key: "length", label: "Length", kind: "length", min: 1, max: 200 },
@@ -44,7 +45,7 @@ export const PROPS = {
     ],
     turn: [
         LEAD_IN, LEAD_OUT,
-        { key: "angle", label: "Turn angle", kind: "angle", min: 0, max: 180 },
+        { key: "angle", label: "Turn angle", kind: "angle", min: 0, max: 360 },
         { key: "radius", label: "Radius", kind: "length", min: 1, max: 100 },
         { key: "radiusType", label: "Radius type", kind: "choice", choices: ["constant", "changing"],
           labels: ["Constant", "Changing"] },
@@ -52,6 +53,11 @@ export const PROPS = {
           showWhen: { key: "radiusType", value: "changing" } },
         Object.assign({ key: "direction", label: "Direction" }, SIDES),
         WIDTH
+    ],
+    // A line is not driven: no track width, no leads. Its spacing is its own setting, never shared with a slalom's.
+    line: [
+        { key: "length", label: "Length", kind: "length", min: 1, max: 200 },
+        { key: "spacing", label: "Cone spacing", kind: "length", min: 0.5, max: 50 }
     ]
 }
 
@@ -60,7 +66,8 @@ const DEFAULTS = {
     slalom: { leadIn: 6, leadOut: 6, coneCount: 4, coneSpacing: 10, weaveOffset: 1.5, firstTurn: "left", trackWidth: 4 },
     chicane: { leadIn: 6, leadOut: 6, shiftLength: 12, shift: 6, direction: "left", trackWidth: 4 },
     turn: { leadIn: 6, leadOut: 6, angle: 180, radius: 6, radiusType: "constant", exitRadius: 10, direction: "right",
-            trackWidth: 4 }
+            trackWidth: 4 },
+    line: { length: 20, spacing: 3 }
 }
 
 export function defaults(type) {
@@ -272,7 +279,39 @@ function turn(p) {
     }
 }
 
-const BUILD = { straight: straight, slalom: slalom, chicane: chicane, turn: turn }
+// A straight row of standing cones, evenly spread at most `spacing` apart, both ends included.
+function line(p) {
+    const half = p.length / 2
+    const gaps = Math.max(1, Math.ceil(p.length / p.spacing - 1e-9))
+    const cones = []
+    for (let i = 0; i <= gaps; i++)
+        cones.push({ x: -half + p.length * i / gaps, y: 0, heading: 0, type: "standing" })
+    return { path: [{ x: -half, y: 0 }, { x: half, y: 0 }],
+             ends: { A: { x: -half, y: 0, heading: 180 }, B: { x: half, y: 0, heading: 0 } }, cones: cones }
+}
+
+// The radius of the circle through three points; Infinity when they lie in a line.
+function circumradius(a, b, c) {
+    const ab = Math.hypot(b.x - a.x, b.y - a.y)
+    const bc = Math.hypot(c.x - b.x, c.y - b.y)
+    const ca = Math.hypot(a.x - c.x, a.y - c.y)
+    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+    if (Math.abs(cross) < 1e-12)
+        return Infinity
+    return ab * bc * ca / (2 * Math.abs(cross))
+}
+
+// The tightest curve along a centreline: the smallest circle through three consecutive points. Repeated points (a
+// lead of no length) are skipped.
+export function tightestRadius(path) {
+    const points = path.filter((p, i) => i === 0 || Math.hypot(p.x - path[i - 1].x, p.y - path[i - 1].y) > 1e-9)
+    let r = Infinity
+    for (let i = 1; i < points.length - 1; i++)
+        r = Math.min(r, circumradius(points[i - 1], points[i], points[i + 1]))
+    return r
+}
+
+const BUILD = { straight: straight, slalom: slalom, chicane: chicane, turn: turn, line: line }
 const cache = new Map()
 
 // The element's centreline, ends and cones in its own frame. Cached by settings; callers must not change the result.
@@ -281,11 +320,43 @@ export function geometry(type, props) {
     let g = cache.get(key)
     if (!g) {
         g = BUILD[type](props)
+        g.tightest = tightestRadius(g.path)
         if (cache.size > 500)
             cache.clear()
         cache.set(key, g)
     }
     return g
+}
+
+// ---- Folding ----
+
+// Whether the element's centreline curves more tightly than half its track width somewhere, so the inside edge of its
+// band crosses over itself and its cones land in strange places. Advice only: it never blocks anything.
+export function folds(el) {
+    if (el.type === "straight" || el.type === "line")
+        return false
+    const half = el.props.trackWidth / 2
+    if (el.type === "turn") {
+        const p = el.props
+        if (!(p.angle > 0))
+            return false
+        const r = p.radiusType === "changing" ? Math.min(p.radius, p.exitRadius) : p.radius
+        return r < half
+    }
+    return geometry(el.type, el.props).tightest < half
+}
+
+// What to change so a folded element stops folding ("" when it does not fold). `formatLength(metres)` writes a length
+// in the display units.
+export function foldAdvice(el, formatLength) {
+    if (!folds(el))
+        return ""
+    if (el.type === "turn")
+        return "Folds in on itself: make the radius at least " + formatLength(el.props.trackWidth / 2)
+               + ", or the track narrower."
+    if (el.type === "chicane")
+        return "Folds in on itself: make the shift length longer or the sideways shift smaller, or the track narrower."
+    return "Folds in on itself: space the cones further apart or make the weave offset smaller, or the track narrower."
 }
 
 // ---- In the world (canvas metres) ----
@@ -326,6 +397,14 @@ export function pointSegmentDistance(p, a, b) {
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
+// How far from its centreline an element can be picked: half its track width, or half a metre for a line (which has
+// no band).
+export const LINE_REACH = 0.5
+
+export function reach(el) {
+    return el.type === "line" ? LINE_REACH : el.props.trackWidth / 2
+}
+
 export function distanceToPath(el, p) {
     const path = pathWorld(el)
     let best = Infinity
@@ -338,7 +417,7 @@ export function distanceToPath(el, p) {
 export function hitTest(elements, p, tolerance) {
     for (let i = elements.length - 1; i >= 0; i--) {
         const el = elements[i]
-        if (distanceToPath(el, p) <= el.props.trackWidth / 2 + tolerance)
+        if (distanceToPath(el, p) <= reach(el) + tolerance)
             return el.id
     }
     return ""
@@ -347,10 +426,10 @@ export function hitTest(elements, p, tolerance) {
 // Where the rotate handle sits: above the band (up the element's own y), `extraMetres` clear of it.
 export function rotateHandle(el, extraMetres) {
     const g = geometry(el.type, el.props)
-    let reach = 0
+    let span = 0
     for (const p of g.path)
-        reach = Math.max(reach, Math.abs(p.y))
-    return toWorld(el, { x: 0, y: -(reach + el.props.trackWidth / 2 + extraMetres) })
+        span = Math.max(span, Math.abs(p.y))
+    return toWorld(el, { x: 0, y: -(span + reach(el) + extraMetres) })
 }
 
 // The band (as wide as the track) around a centreline, as one closed outline: one side forward, the other back.

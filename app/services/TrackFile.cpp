@@ -70,6 +70,21 @@ QString TrackFile::save(const QString &path, const QString &documentText, int ph
     return saveTo(path, documentText, photos(), photoRef);
 }
 
+QString TrackFile::absolutePath(const QString &path) const
+{
+    return path.isEmpty() ? QString() : QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+}
+
+QUrl TrackFile::folderUrl(const QString &path) const
+{
+    return QUrl::fromLocalFile(QFileInfo(path).absolutePath());
+}
+
+QUrl TrackFile::fileUrl(const QString &path) const
+{
+    return QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
+}
+
 QVariantMap TrackFile::open(const QString &path)
 {
     return openFrom(path, photos());

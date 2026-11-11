@@ -3,6 +3,8 @@ import QtTest
 import "../../qml/logic/commands.mjs" as Commands
 import "../../qml/logic/postprocess.mjs" as Post
 import "../../qml/logic/snapping.mjs" as Snapping
+import "../../qml/logic/demo.mjs" as Demo
+import "fixtures/sampletrack.mjs" as Sample
 
 TestCase {
     name: "PostProcess"
@@ -161,5 +163,80 @@ TestCase {
         compare(r.canvasCones[3].type, r.cones[3].type)
         compare(r.cones[3].element, "e1")
         compare(r.canvasCones[3].element, "e1")
+    }
+
+    function test_lineConesComeAfterTheCourseNearestFirst() {
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "straight", x: 10, y: 5 }],                                          // course: x 0 to 20
+            ["add", { type: "line", x: 60, y: 20, props: { length: 10, spacing: 5 } }],          // far wall: x 55 to 65
+            ["add", { type: "line", x: 30, y: 5, rotation: 180, props: { length: 10, spacing: 5 } }]  // near: A x 35, B x 25
+        ]))
+        const cones = Post.run(t).canvasCones
+        compare(cones.length, 12)
+        verify(cones.slice(0, 6).every(c => c.element === "e1"), "the course first")
+        // The near wall next, from its end nearer the course's last cone (x 25 is nearer x 20 than x 35 is).
+        compare(cones[6].element, "e3")
+        fuzzyCompare(cones[6].x, 25, 1e-9)
+        fuzzyCompare(cones[8].x, 35, 1e-9)
+        // Then the far wall, from its end nearer x 35.
+        compare(cones[9].element, "e2")
+        fuzzyCompare(cones[9].x, 55, 1e-9)
+    }
+
+    function test_linesAloneStillProcess() {
+        const t = build(scale().concat(targets(), [["add", { type: "line", x: 10, y: 5 }]]))
+        const r = Post.run(t)
+        verify(!r.error, r.error ? r.error.message : "")
+        compare(r.cones.length, 8)
+        compare(JSON.stringify(Post.backwards(t.elements)), "[]")
+        compare(JSON.stringify(Post.chains(t.elements)), "[]")
+    }
+
+    function total(groups) {
+        return groups.reduce((n, g) => n + g.cones.length, 0)
+    }
+
+    function test_crossingStraightsLoseTheConesOnEachOther() {
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "straight", x: 20, y: 20 }],
+            ["add", { type: "straight", x: 20, y: 20, rotation: 90 }]
+        ]))
+        const groups = Post.coneGroups(t.elements)
+        compare(total(groups), 12)
+        Post.removeOnTrack(groups, t.elements)
+        compare(total(groups), 8)
+        verify(groups.every(g => g.cones.every(c => Math.hypot(c.x - 20, c.y - 20) > 3)), "the middle pairs went")
+        compare(Post.run(t).cones.length, 8)
+    }
+
+    function test_aLoopOverItsLeadsLosesTheConesItRunsOver() {
+        const t = build(scale().concat(targets(), [["add", { type: "turn", x: 20, y: 20, props: { angle: 360 } }]]))
+        const groups = Post.coneGroups(t.elements)
+        const before = total(groups)
+        Post.removeOnTrack(groups, t.elements)
+        verify(total(groups) < before, before + " -> " + total(groups))
+    }
+
+    function test_aLineAcrossTheTrackLosesItsConesOnIt() {
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "straight", x: 20, y: 20 }],
+            ["add", { type: "line", x: 20, y: 20, rotation: 90, props: { length: 10, spacing: 1 } }]
+        ]))
+        const groups = Post.coneGroups(t.elements)
+        Post.removeOnTrack(groups, t.elements)
+        const wall = groups.find(g => g.id === "e2").cones
+        // 11 cones a metre apart across the track: those at 19, 20 and 21 go; 18 and 22 sit on its edges and stay.
+        compare(wall.length, 8)
+        verify(wall.every(c => Math.abs(c.y - 20) >= 1.85), JSON.stringify(wall.map(c => c.y)))
+        compare(groups.find(g => g.id === "e1").cones.length, 6, "a line has no band: it removes nothing")
+    }
+
+    function test_aCleanTrackLosesNothing() {
+        for (const t of [Demo.demoTrack(), Sample.track()]) {
+            const groups = Post.coneGroups(t.elements)
+            const before = total(groups)
+            Post.removeOnTrack(groups, t.elements)
+            compare(total(groups), before)
+        }
     }
 }

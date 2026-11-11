@@ -3,6 +3,7 @@ import QtQuick
 import Conestructor
 import "logic/commands.mjs" as Commands
 import "logic/conefile.mjs" as ConeFile
+import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
 import "logic/postprocess.mjs" as Post
 
@@ -38,6 +39,8 @@ QtObject {
 
     // Elements driven against the rest of their chain: they show a warning (Reverse direction fixes it).
     readonly property var backwardIds: Post.backwards(track.elements)
+    // Elements whose inside edge crosses over itself: they show a warning too (advice only).
+    readonly property var foldedIds: track.elements.filter(e => Elements.folds(e)).map(e => e.id)
 
     property string message: ""
     property bool previewOn: false
@@ -56,6 +59,8 @@ QtObject {
     // Something the person needs to fix; `target` says what "Show me" pans to ({ kind, id? }) or is null.
     signal problem(string message, var target)
     signal problemsCleared()
+    // A different track took this one's place (New, Open, Restore, the demo): anything half-done on the canvas stops.
+    signal trackReplaced()
 
     function setTrack(t) {
         track = t
@@ -94,6 +99,15 @@ QtObject {
         syncStack()
     }
 
+    // The track text last backed up (Main's two-minute timer), so an unchanged track is not written again. Deleting the
+    // backup forgets it, so a track still unsaved afterwards is backed up again.
+    property string backedUpText: ""
+
+    function deleteBackup() {
+        TrackFile.deleteBackup()
+        backedUpText = ""
+    }
+
     // Ends the current step: the next change, even to the same field, is a new undo step.
     function seal() {
         stack.seal()
@@ -105,6 +119,7 @@ QtObject {
         preview = null
         selection = []
         setTrack(t)
+        trackReplaced()
     }
 
     function markSaved() {
@@ -139,7 +154,7 @@ QtObject {
         filePath = path
         markSaved()
         Settings.addRecentFile(path)
-        TrackFile.deleteBackup()
+        deleteBackup()
         message = qsTr("Saved %1").arg(path)
         return true
     }

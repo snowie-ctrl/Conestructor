@@ -446,4 +446,30 @@ TestCase {
         compare(byId(t, "e3").joins.A.id, "e2")
         compare(byId(t, "e2").joins.B.id, "e3")
     }
+
+    // A skidpad figure 8: two full loops, one each way, joined.
+    function test_aFigureEightIsTwoJoinedLoops() {
+        const s = new Commands.UndoStack()
+        let t = Commands.emptyTrack()
+        t = Commands.run(s, t, "setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 10 })
+        t = Commands.run(s, t, "add", { type: "turn", x: 30, y: 30, props: { angle: 360, leadOut: 0, radius: 9 } })
+        t = Commands.run(s, t, "add", { type: "turn", x: 0, y: 0, props: { angle: 360, leadIn: 0, radius: 9, direction: "left" },
+                                        snap: { ownEnd: "A", id: "e1", end: "B" } })
+        compare(byId(t, "e1").joins.B.id, "e2")
+        verify(endsMeet(t, "e1", "B", "e2", "A"))
+        compare(byId(t, "e1").joins.A, null)
+        compare(byId(t, "e2").joins.B, null)
+    }
+
+    function test_stretchMovesAndChangesOneSettingAsOneStep() {
+        const s = new Commands.UndoStack()
+        const t0 = base()
+        const t1 = Commands.run(s, t0, "stretch", { id: "e3", x: 1, y: 2, rotation: 400, key: "length", value: 30, mergeKey: "g1" })
+        compare(byId(t1, "e3").rotation, 40)
+        const t2 = Commands.run(s, t1, "stretch", { id: "e3", x: 1, y: 3, rotation: 40, key: "length", value: 300, mergeKey: "g1" })
+        compare(byId(t2, "e3").props.length, 200)            // kept within its limits
+        compare(s.undoLabel(), "Stretch Straight")
+        compare(s.done.length, 1)
+        compare(JSON.stringify(s.undo()), JSON.stringify(t0))
+    }
 }

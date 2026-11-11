@@ -30,6 +30,11 @@ public:
     // "Duck pond" for ".../Duck pond.cone".
     Q_INVOKABLE QString baseName(const QString &path) const;
     Q_INVOKABLE bool exists(const QString &path) const;
+    // A path from the command line made absolute (native separators); "" stays "".
+    Q_INVOKABLE QString absolutePath(const QString &path) const;
+    // Where Save As starts for the track at `path`: its folder, and the file itself.
+    Q_INVOKABLE QUrl folderUrl(const QString &path) const;
+    Q_INVOKABLE QUrl fileUrl(const QString &path) const;
     // Writes the track: "" when written, otherwise a sentence saying what went wrong.
     Q_INVOKABLE QString save(const QString &path, const QString &documentText, int photoRef);
     // { text, photoRef, photoError } or { error: "missing" | "unreadable" | "notJson", message }. `text` is the

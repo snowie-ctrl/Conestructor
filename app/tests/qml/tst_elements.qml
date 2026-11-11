@@ -150,7 +150,7 @@ TestCase {
             { tag: "fine", type: "straight", key: "trackWidth", value: 4, expected: 4, clamped: false },
             { tag: "counts are whole", type: "slalom", key: "coneCount", value: 4.6, expected: 5, clamped: false },
             { tag: "unknown choice", type: "slalom", key: "firstTurn", value: "up", expected: "left", clamped: true },
-            { tag: "angle over 180", type: "turn", key: "angle", value: 270, expected: 180, clamped: true },
+            { tag: "angle over 360", type: "turn", key: "angle", value: 400, expected: 360, clamped: true },
             { tag: "not a number", type: "turn", key: "radius", value: NaN, expected: 1, clamped: true }
         ]
     }
@@ -285,5 +285,102 @@ TestCase {
         const g = Elements.geometry("turn", Object.assign(Elements.defaults("turn"), { leadIn: 0, leadOut: 0 }))
         near(g.ends.B.x - g.ends.A.x, 0, 1e-3, "level with the entry")
         near(g.ends.B.y - g.ends.A.y, 12, 1e-3, "exactly a 12 m diameter")
+    }
+
+    function test_aTurnGoesUpToAFullCircle() {
+        const full = Elements.clampProp("turn", "angle", 360)
+        compare(full.value, 360)
+        verify(!full.clamped)
+        compare(Elements.clampProp("turn", "angle", 400).value, 360)
+    }
+
+    function test_aFullLoopLeavesTheWayItCameIn() {
+        const g = Elements.geometry("turn", Object.assign(Elements.defaults("turn"), { angle: 360 }))
+        fuzzyCompare(g.ends.B.heading, 0, 1e-9)
+        fuzzyCompare(g.ends.B.x - g.ends.A.x, 12, 1e-6)      // lead-in 6 m and lead-out 6 m along the entry line
+        fuzzyCompare(g.ends.B.y - g.ends.A.y, 0, 1e-6)
+    }
+
+    function test_aFullLoopReversesInPlace() {
+        const el = { id: "e1", type: "turn", x: 10, y: 20, rotation: 30,
+                     props: Object.assign(Elements.defaults("turn"), { angle: 360, leadOut: 2 }), joins: { A: null, B: null } }
+        const r = Object.assign({}, el, Elements.reversed(el))
+        const before = Elements.endsWorld(el)
+        const after = Elements.endsWorld(r)
+        fuzzyCompare(after.A.x, before.B.x, 1e-6)
+        fuzzyCompare(after.A.y, before.B.y, 1e-6)
+        fuzzyCompare(after.B.x, before.A.x, 1e-6)
+        fuzzyCompare(after.B.y, before.A.y, 1e-6)
+    }
+
+    function test_aLineIsARowOfStandingCones() {
+        compare(JSON.stringify(Elements.defaults("line")), JSON.stringify({ length: 20, spacing: 3 }))
+        compare(Elements.NAMES.line, "Line")
+        compare(Elements.TIPS.line, "Line: a straight row of cones, for walls and boundaries.")
+        const g = Elements.geometry("line", Elements.defaults("line"))
+        compare(g.cones.length, 8)                       // 20 m at most 3 m apart: 7 gaps of 2.857 m
+        fuzzyCompare(g.cones[0].x, -10, 1e-9)
+        fuzzyCompare(g.cones[7].x, 10, 1e-9)
+        fuzzyCompare(g.cones[1].x - g.cones[0].x, 20 / 7, 1e-9)
+        verify(g.cones.every(c => c.type === "standing" && c.y === 0 && c.heading === 0))
+        compare(Elements.geometry("line", { length: 21, spacing: 3 }).cones.length, 8)   // exactly 3 m apart
+        fuzzyCompare(g.ends.A.x, -10, 1e-9)
+        compare(g.ends.A.heading, 180)
+        compare(g.ends.B.heading, 0)
+    }
+
+    function test_aLineIsPickedWithinHalfAMetre() {
+        const line = { id: "e1", type: "line", x: 0, y: 0, rotation: 0, props: Elements.defaults("line"),
+                       joins: { A: null, B: null } }
+        compare(Elements.hitTest([line], { x: 3, y: 0.4 }, 0), "e1")
+        compare(Elements.hitTest([line], { x: 3, y: 0.6 }, 0), "")
+        compare(Elements.reach(line), 0.5)
+        compare(Elements.reach({ type: "straight", props: { trackWidth: 4 } }), 2)
+        const handle = Elements.rotateHandle(line, 1)
+        fuzzyCompare(handle.y, -1.5, 1e-9)               // half a metre of reach plus the 1 m asked for
+    }
+
+    function typed(type, props) {
+        return { id: "e1", type: type, x: 0, y: 0, rotation: 0, props: Object.assign(Elements.defaults(type), props || {}),
+                 joins: { A: null, B: null } }
+    }
+
+    function test_tightestRadiusOfACircle() {
+        const points = []
+        for (let i = 0; i <= 12; i++)
+            points.push({ x: 5 * Math.cos(i * Math.PI / 6), y: 5 * Math.sin(i * Math.PI / 6) })
+        fuzzyCompare(Elements.tightestRadius(points), 5, 1e-9)
+        // Repeated points (an empty lead) are skipped; points in a line are no curve at all.
+        compare(Elements.tightestRadius([{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }]), Infinity)
+    }
+
+    function test_noDefaultElementFolds() {
+        for (const type of Elements.TYPES)
+            verify(!Elements.folds(typed(type)), type)
+        verify(!Elements.folds(typed("straight", { trackWidth: 20 })))
+    }
+
+    function test_aTurnFoldsBelowHalfItsWidth() {
+        verify(!Elements.folds(typed("turn", { radius: 2 })), "at half the width it does not fold")
+        verify(Elements.folds(typed("turn", { radius: 1.9 })))
+        verify(Elements.folds(typed("turn", { radiusType: "changing", radius: 6, exitRadius: 1.5 })))
+        verify(!Elements.folds(typed("turn", { radiusType: "constant", radius: 6, exitRadius: 1.5 })), "exit radius unused")
+        verify(!Elements.folds(typed("turn", { radius: 1, angle: 0 })), "no turn, no fold")
+    }
+
+    function test_tightChicanesAndSlalomsFold() {
+        verify(Elements.folds(typed("chicane", { shiftLength: 2, shift: 6 })))
+        verify(Elements.folds(typed("slalom", { coneSpacing: 2, weaveOffset: 3 })))
+    }
+
+    function test_foldAdviceNamesTheFix() {
+        const metres = m => m.toFixed(1) + " m"
+        compare(Elements.foldAdvice(typed("turn", { radius: 1 }), metres),
+                "Folds in on itself: make the radius at least 2.0 m, or the track narrower.")
+        compare(Elements.foldAdvice(typed("chicane", { shiftLength: 2 }), metres),
+                "Folds in on itself: make the shift length longer or the sideways shift smaller, or the track narrower.")
+        compare(Elements.foldAdvice(typed("slalom", { coneSpacing: 2, weaveOffset: 3 }), metres),
+                "Folds in on itself: space the cones further apart or make the weave offset smaller, or the track narrower.")
+        compare(Elements.foldAdvice(typed("turn"), metres), "")
     }
 }

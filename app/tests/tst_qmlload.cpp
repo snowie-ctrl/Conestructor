@@ -1,5 +1,6 @@
 #include <QQmlApplicationEngine>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
 #include <QJSValue>
@@ -68,6 +69,129 @@ static QQuickItem *textBox(QQuickItem *field)
     return nullptr;
 }
 
+// Whether a QML `var` property holds null (or nothing).
+static bool isNull(const QVariant &v)
+{
+    return !v.isValid() || v.isNull() || qvariant_cast<QJSValue>(v).isNull();
+}
+
+// A QML `var` value as plain Qt values (a JS array becomes a QVariantList, an object a QVariantMap).
+static QVariant plain(const QVariant &v)
+{
+    return v.userType() == qMetaTypeId<QJSValue>() ? qvariant_cast<QJSValue>(v).toVariant() : v;
+}
+
+// Types text into whatever has focus in `window` (QTest::keyClicks takes widgets only).
+static void typeText(QWindow *window, const QString &text)
+{
+    for (const QChar c : text)
+        QTest::keyClick(window, c.toLatin1());
+}
+
+// One loaded Main with the helpers the part 3 window tests share.
+struct Loaded
+{
+    QQmlApplicationEngine engine;
+    QQuickWindow *window = nullptr;
+    QQuickItem *canvas = nullptr;
+    QObject *store = nullptr;
+
+    // Loads and shows Main; `demo` loads the example track (setup done) and waits for it to be fitted.
+    bool load(bool demo)
+    {
+        engine.loadFromModule("Conestructor", "Main");
+        if (engine.rootObjects().isEmpty())
+            return false;
+        window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (!window || !QTest::qWaitForWindowExposed(window))
+            return false;
+        window->requestActivate();
+        if (!QTest::qWaitForWindowActive(window))
+            return false;
+        canvas = window->findChild<QQuickItem *>(QStringLiteral("canvasView"));
+        store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        if (!canvas || !store)
+            return false;
+        if (demo)
+            QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        return QTest::qWaitFor([this]() { return !canvas->property("fitPending").toBool(); });
+    }
+
+    QVariantMap element(const QString &id) const
+    {
+        QVariant v;
+        QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+        return qvariant_cast<QJSValue>(v).toVariant().toMap();
+    }
+    QVariantMap track() const { return plain(store->property("track")).toMap(); }
+    double mpp() const { return store->property("mpp").toDouble(); }
+    double zoom() const { return canvas->property("zoom").toDouble(); }
+    // A point in canvas metres, on screen (canvas coordinates).
+    QPointF screen(double mx, double my) const
+    {
+        QVariant v;
+        QMetaObject::invokeMethod(canvas, "toScreen", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, mx / mpp()),
+                                  Q_ARG(QVariant, my / mpp()));
+        const QVariantMap p = qvariant_cast<QJSValue>(v).toVariant().toMap();
+        return { p.value("x").toDouble(), p.value("y").toDouble() };
+    }
+    // A screen point (canvas coordinates) in photo pixels.
+    QPointF world(QPointF s) const
+    {
+        QVariant v;
+        QMetaObject::invokeMethod(canvas, "toWorld", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, s.x()), Q_ARG(QVariant, s.y()));
+        const QVariantMap p = qvariant_cast<QJSValue>(v).toVariant().toMap();
+        return { p.value("x").toDouble(), p.value("y").toDouble() };
+    }
+    QPoint scene(QPointF p) const { return canvas->mapToScene(p).toPoint(); }
+    void click(QPointF p, Qt::MouseButton button = Qt::LeftButton) const { QTest::mouseClick(window, button, {}, scene(p)); }
+    void drag(QPointF from, QPointF to, int steps = 8) const
+    {
+        const QPoint a = scene(from);
+        const QPoint b = scene(to);
+        QTest::mousePress(window, Qt::LeftButton, {}, a);
+        for (int i = 1; i <= steps; ++i)
+            QTest::mouseMove(window, a + (b - a) * i / steps);
+        QTest::mouseRelease(window, Qt::LeftButton, {}, b);
+    }
+    void clickItem(QQuickItem *item) const
+    {
+        QTest::mouseClick(window, Qt::LeftButton, {}, item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+    }
+    void run(const QString &name, const QVariantMap &args) const
+    {
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, name), Q_ARG(QVariant, args));
+    }
+    QString label() const { return store->property("undoLabel").toString(); }
+    QQuickItem *named(const QString &objectName) const
+    {
+        for (QQuickItem *item : allItems(window->contentItem()))
+            if (item->objectName() == objectName)
+                return item;
+        return nullptr;
+    }
+    // The palette or checklist tile for `kind`.
+    QQuickItem *tile(const QString &kind) const
+    {
+        for (QQuickItem *item : allItems(window->contentItem()))
+            if (QByteArray(item->metaObject()->className()).startsWith("PaletteTile") && item->property("kind").toString() == kind)
+                return item;
+        return nullptr;
+    }
+    // The ElementView drawing element `id`.
+    QQuickItem *view(const QString &id) const
+    {
+        for (QQuickItem *item : allItems(window->contentItem())) {
+            if (!QByteArray(item->metaObject()->className()).startsWith("ElementView"))
+                continue;
+            const QVariantMap e = qvariant_cast<QJSValue>(item->property("element")).toVariant().toMap();
+            if (e.value("id").toString() == id)
+                return item;
+        }
+        return nullptr;
+    }
+};
+
 // Loads the real window offscreen. Any warning from QML (a broken binding, a missing property) fails the run.
 class TestQmlLoad : public QObject
 {
@@ -96,7 +220,7 @@ private slots:
         QCOMPARE(engine.rootObjects().size(), 1);
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Untitled"));
     }
 
     void theExampleTrackDrawsAndPlacesCones()
@@ -562,7 +686,7 @@ private slots:
         QObject *settings = engine.singletonInstance<QObject *>("Conestructor", "Settings");
         auto *photo = window->findChild<QQuickItem *>(QStringLiteral("photo"));
         QVERIFY(store && settings && photo);
-        const QString dash = QStringLiteral("Conestructor 0.3 \u2014 ");
+        const QString dash = QStringLiteral("Conestructor 0.4 \u2014 ");
 
         QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
         QCOMPARE(window->title(), dash + QStringLiteral("Untitled"));
@@ -669,7 +793,7 @@ private slots:
         QTRY_VERIFY(dialog->property("opened").toBool());
         click(QStringLiteral("Don't save"));
         QTRY_COMPARE(store->property("elementCount").toInt(), 0);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Untitled"));
 
         // Closing with changes asks too; Don't save closes.
         QMetaObject::invokeMethod(window, "useBlueprint");
@@ -701,7 +825,7 @@ private slots:
         QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
         QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, path));
         QCOMPARE(store->property("elementCount").toInt(), 4);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Start"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Start"));
     }
 
     // Unsaved changes are backed up; at the next start the backup is offered; Discard forgets it; Save removes it.
@@ -746,7 +870,7 @@ private slots:
             click(window, QStringLiteral("Restore"));
             QTRY_COMPARE(store->property("elementCount").toInt(), 4);
             QVERIFY(store->property("dirty").toBool());
-            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Untitled*"));
+            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Untitled*"));
             QVERIFY(!backup(engine).isEmpty());                      // kept until saved or closed normally
             const QString path = dir.filePath(QStringLiteral("Restored.cone"));
             QVariant ok;
@@ -1150,6 +1274,450 @@ private slots:
             QVERIFY(!backup(engine).isEmpty());
             QMetaObject::invokeMethod(engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "deleteBackup");
         }
+    }
+
+    // A folded turn shows the warning with the fix in display units; a line draws no arrows, a dot per cone, and its
+    // cones come last.
+    void foldsAndLinesOnTheCanvas()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        w.run(QStringLiteral("setProp"), { { "id", "e3" }, { "key", "radius" }, { "value", 1.0 } });
+        QCOMPARE(plain(w.store->property("foldedIds")).toStringList(), QStringList{ QStringLiteral("e3") });
+        QVERIFY(w.view(QStringLiteral("e3"))->property("folded").toBool());
+        QVariant text;
+        QMetaObject::invokeMethod(w.canvas, "warningText", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, QStringLiteral("e3")));
+        // Half the 4 m width, in whatever units an earlier test left saved.
+        QVERIFY2(text.toString().startsWith(QStringLiteral("Folds in on itself: make the radius at least "))
+                     && text.toString().endsWith(QStringLiteral(", or the track narrower.")), qPrintable(text.toString()));
+
+        w.run(QStringLiteral("add"), { { "type", "line" }, { "x", 120.0 }, { "y", 68.0 } });
+        QQuickItem *line = w.view(QStringLiteral("e5"));
+        QVERIFY(line);
+        QCOMPARE(plain(line->property("chevrons")).toList().size(), 0);
+        QCOMPARE(plain(line->property("dots")).toList().size(), 8);
+        QVERIFY(plain(w.view(QStringLiteral("e1"))->property("chevrons")).toList().size() >= 2);
+
+        QMetaObject::invokeMethod(w.store, "placeCones");
+        const QVariantList cones = plain(w.store->property("preview")).toMap().value("canvasCones").toList();
+        QCOMPARE(cones.last().toMap().value("element").toString(), QStringLiteral("e5"));
+    }
+
+    // Part 2's minor: arrows were one item per chevron, rebuilt on every edit. Dragging one element of a 40-element
+    // course must keep up: the average time to handle a mouse move stays under a budget measured on the owner's machine.
+    void draggingOnABigCourseKeepsUp()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        for (int i = 5; i <= 40; ++i) {
+            QVariantMap add{ { "type", i % 2 ? QStringLiteral("turn") : QStringLiteral("straight") }, { "x", 0.0 }, { "y", 0.0 },
+                             { "snap", QVariantMap{ { "ownEnd", "A" }, { "id", QStringLiteral("e%1").arg(i - 1) }, { "end", "B" } } } };
+            if (i % 2)
+                add.insert("props", QVariantMap{ { "angle", 20.0 } });
+            w.run(QStringLiteral("add"), add);
+        }
+        QCOMPARE(w.store->property("elementCount").toInt(), 40);
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const QPointF from = w.screen(e1.value("x").toDouble(), e1.value("y").toDouble());
+        const QPoint a = w.scene(from);
+        QElapsedTimer timer;
+        QTest::mousePress(w.window, Qt::LeftButton, {}, a);
+        timer.start();
+        const int moves = 20;
+        for (int i = 1; i <= moves; ++i)
+            QTest::mouseMove(w.window, a + QPoint(0, 4 * i));
+        const double perMove = double(timer.elapsed()) / moves;
+        QTest::mouseRelease(w.window, Qt::LeftButton, {}, a + QPoint(0, 4 * moves));
+        qInfo("ms per move on a 40-element course: %.1f", perMove);
+        // Twice the slowest time measured on the owner's laptop (debug build): about 1000 ms in its quiet power mode,
+        // 260 ms otherwise. It catches a gross slowdown, not a small one.
+        const double budget = 2000;
+        QVERIFY2(perMove < budget, qPrintable(QStringLiteral("%1 ms per move").arg(perMove)));
+    }
+
+    // A joined straight's open end only stretches; a free straight's end swings it about its other end; each drag is
+    // one step; a joined end is not a node.
+    void gateNodesPivotAndStretch()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        const double perPixel = w.mpp() / w.zoom();          // metres per screen pixel
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const double length = e1.value("props").toMap().value("length").toDouble();
+        const double x1 = e1.value("x").toDouble();
+        const double y1 = e1.value("y").toDouble();
+
+        // e1 (the demo's first straight, rotation 0) is joined at B, so its open A end only stretches.
+        const QPointF a = w.screen(x1 - length / 2, y1);
+        QTest::mouseMove(w.window, w.scene(a));
+        QTRY_COMPARE(w.view(QStringLiteral("e1"))->property("hoverEnd").toString(), QStringLiteral("A"));
+        w.drag(a, a + QPointF(-40, 15));
+        QCOMPARE(w.label(), QStringLiteral("Stretch Straight"));
+        const QVariantMap stretched = w.element(QStringLiteral("e1"));
+        QCOMPARE(stretched.value("rotation").toDouble(), 0.0);
+        QVERIFY2(std::abs(stretched.value("props").toMap().value("length").toDouble() - (length + 40 * perPixel)) < 1.5 * perPixel,
+                 qPrintable(QString::number(stretched.value("props").toMap().value("length").toDouble())));
+        QVERIFY(!stretched.value("joins").toMap().value("B").isNull());
+        QMetaObject::invokeMethod(w.store, "undo");
+        QCOMPARE(w.element(QStringLiteral("e1")).value("props").toMap().value("length").toDouble(), length);
+
+        // A free straight pivots about its other end.
+        w.run(QStringLiteral("add"), { { "type", "straight" }, { "x", x1 }, { "y", y1 + 20 } });
+        const QPointF freeA = w.screen(x1 - 10, y1 + 20);
+        const QPointF freeB = w.screen(x1 + 10, y1 + 20);
+        w.drag(freeB, freeA + QPointF(0, 60));
+        QCOMPARE(w.label(), QStringLiteral("Stretch Straight"));
+        const QVariantMap swung = w.element(QStringLiteral("e5"));
+        QVERIFY2(std::abs(swung.value("rotation").toDouble() - 90) < 2, qPrintable(QString::number(swung.value("rotation").toDouble())));
+        QVERIFY(std::abs(swung.value("props").toMap().value("length").toDouble() - 60 * perPixel) < 1.5 * perPixel);
+        // Its A end has not moved.
+        const double r = swung.value("rotation").toDouble() * M_PI / 180;
+        const double half = swung.value("props").toMap().value("length").toDouble() / 2;
+        QVERIFY(std::abs(swung.value("x").toDouble() - half * std::cos(r) - (x1 - 10)) < 1e-6);
+        QVERIFY(std::abs(swung.value("y").toDouble() - half * std::sin(r) - (y1 + 20)) < 1e-6);
+
+        // The joint between e1 and e2 is not a node: pressing there grabs the element, not a stretch.
+        const QPointF joint = w.screen(x1 + length / 2, y1);
+        w.drag(joint, joint + QPointF(0, 40));
+        QVERIFY2(!w.label().startsWith(QStringLiteral("Stretch")), qPrintable(w.label()));
+    }
+
+    // Every tile places by clicking it, then the canvas; the ruler takes two clicks and then asks for its length on
+    // the spot. Review focus 1, 2 and 5: undo with the box open, typing in feet and inches or nonsense, switching tiles.
+    void tilesPlaceByClicking()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        auto placing = [&]() { return w.canvas->property("placingBy").toString(); };
+        auto kind = [&]() { return w.canvas->property("placingKind").toString(); };
+        auto ruler = [&]() { return w.track().value("ruler").toMap(); };
+
+        // The ruler: two clicks, a rubber band between them.
+        w.clickItem(w.tile(QStringLiteral("ruler")));
+        QCOMPARE(placing(), QStringLiteral("click"));
+        QCOMPARE(kind(), QStringLiteral("ruler"));
+        QTest::mouseMove(w.window, w.scene({ 300, 400 }));
+        QVERIFY(!isNull(w.canvas->property("placingPoint")));
+        w.click({ 300, 400 });
+        QVERIFY(ruler().isEmpty());
+        QVERIFY(!isNull(w.canvas->property("rulerFirst")));
+        QTest::mouseMove(w.window, w.scene({ 500, 400 }));
+        QVERIFY(!isNull(w.canvas->property("rulerGhost")));
+        w.click({ 500, 400 });
+        QCOMPARE(placing(), QString());
+        const QPointF a = w.world({ 300, 400 });
+        QVERIFY(std::abs(ruler().value("a").toMap().value("x").toDouble() - a.x()) < 1.0 / w.zoom() + 1e-9);
+        QCOMPARE(ruler().value("realLength").toDouble(), 0.0);
+
+        // The length box is open and focused: nonsense turns red and stays; 18' 6" sets 5.6388 m and closes it.
+        QQuickItem *box = w.named(QStringLiteral("rulerLengthBox"));
+        QVERIFY(box);
+        QTRY_VERIFY(box->isVisible());
+        typeText(w.window, QStringLiteral("abc"));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QVERIFY(box->isVisible());
+        QVERIFY(box->property("bad").toBool());
+        QCOMPARE(ruler().value("realLength").toDouble(), 0.0);
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("18' 6\""));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QTRY_VERIFY(!box->isVisible());
+        QVERIFY(std::abs(ruler().value("realLength").toDouble() - 5.6388) < 1e-9);
+        QCOMPARE(w.label(), QStringLiteral("Set ruler"));
+
+        // Undo with the box open: undo the length, then undo the ruler itself while the box shows: it closes for good.
+        QMetaObject::invokeMethod(w.store, "undo");          // length off: the box does not reopen by itself
+        QVERIFY(!box->isVisible());
+        QMetaObject::invokeMethod(w.canvas, "openLengthBox");
+        QTRY_VERIFY(box->isVisible());
+        QMetaObject::invokeMethod(w.store, "undo");          // the ruler goes
+        QTRY_VERIFY(!box->isVisible());
+        QVERIFY(!w.canvas->property("lengthBoxOpen").toBool());
+        QMetaObject::invokeMethod(w.store, "redo");
+        QVERIFY(!box->isVisible());
+        QMetaObject::invokeMethod(w.store, "redo");          // the length back
+
+        // Switching tiles: only one is picked up; the same tile again, Esc or a right-click drops it.
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        QCOMPARE(kind(), QStringLiteral("origin"));
+        QVERIFY(w.store->property("message").toString().contains(QStringLiteral("Esc to cancel")));
+        w.clickItem(w.tile(QStringLiteral("direction")));
+        QCOMPARE(kind(), QStringLiteral("direction"));
+        w.clickItem(w.tile(QStringLiteral("direction")));
+        QCOMPARE(placing(), QString());
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QCOMPARE(placing(), QString());
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        w.click({ 400, 500 }, Qt::RightButton);
+        QCOMPARE(placing(), QString());
+        QVERIFY(w.track().value("targets").toMap().value("origin").isNull());
+
+        // Origin and Direction by clicking.
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        w.click({ 400, 500 });
+        QCOMPARE(w.label(), QStringLiteral("Place Origin"));
+        w.clickItem(w.tile(QStringLiteral("direction")));
+        w.click({ 900, 500 });
+        QCOMPARE(w.label(), QStringLiteral("Place Direction"));
+
+        // A track piece by clicking, now setup is done: the ghost follows, a click adds it.
+        w.clickItem(w.tile(QStringLiteral("straight")));
+        QTest::mouseMove(w.window, w.scene({ 600, 650 }));
+        QVERIFY(!isNull(w.canvas->property("ghost")));
+        w.click({ 600, 650 });
+        QCOMPARE(w.store->property("elementCount").toInt(), 1);
+        QCOMPARE(w.label(), QStringLiteral("Add Straight"));
+        QCOMPARE(placing(), QString());
+    }
+
+    // Dragging the ruler or a target from its tile shows where it will land, as track pieces already did.
+    void draggingATileShowsAGhost()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        QQuickItem *origin = w.tile(QStringLiteral("origin"));
+        const QPoint start = origin->mapToScene(QPointF(origin->width() / 2, origin->height() / 2)).toPoint();
+        const QPoint end = w.scene({ 400, 500 });
+        QTest::mousePress(w.window, Qt::LeftButton, {}, start);
+        for (int i = 1; i <= 8; ++i)
+            QTest::mouseMove(w.window, start + (end - start) * i / 8);
+        QCOMPARE(w.canvas->property("placingBy").toString(), QStringLiteral("drag"));
+        QVERIFY(!isNull(w.canvas->property("placingPoint")));
+        QTest::mouseRelease(w.window, Qt::LeftButton, {}, end);
+        QCOMPARE(w.label(), QStringLiteral("Place Origin"));
+        QVERIFY(isNull(w.canvas->property("placingPoint")));
+    }
+
+    // A new track shows the coach card for the step to do now; its buttons start each step; the matching checklist row
+    // is highlighted; the card goes when setup is done and comes back when a step comes undone. The banner sits below
+    // the card.
+    void theCoachCardWalksThroughSetup()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QQuickItem *card = w.named(QStringLiteral("coachCard"));
+        QVERIFY(card && card->isVisible());
+        auto step = [&]() { return card->property("step").toString(); };
+        auto row = [&](int n) { return w.named(QStringLiteral("setupStep%1").arg(n)); };
+        auto press = [&](const QString &text) {
+            QQuickItem *button = findButton(w.window, text);
+            QVERIFY2(button, qPrintable(text));
+            w.clickItem(button);
+        };
+        QCOMPARE(step(), QStringLiteral("photo"));
+        QVERIFY(row(1)->property("current").toBool());
+        QCOMPARE(w.named(QStringLiteral("setupTitle"))->property("text").toString(), QStringLiteral("Setup: start here"));
+
+        QMetaObject::invokeMethod(w.store, "report", Q_ARG(QVariant, QStringLiteral("A note")), Q_ARG(QVariant, QVariant()));
+        QQuickItem *banner = findBanner(w.window);
+        QVERIFY(banner->y() >= card->y() + card->height());
+
+        press(QStringLiteral("Use the blueprint"));
+        QCOMPARE(step(), QStringLiteral("ruler"));
+        QVERIFY(row(2)->property("current").toBool());
+        QVERIFY(row(3)->opacity() < 1);
+
+        press(QStringLiteral("Place the ruler"));
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("ruler"));
+        w.click({ 300, 500 });
+        w.click({ 500, 500 });
+        QCOMPARE(step(), QStringLiteral("rulerLength"));
+        QTRY_VERIFY(w.named(QStringLiteral("rulerLengthBox"))->isVisible());
+        typeText(w.window, QStringLiteral("20"));             // a bare number is feet in feet and inches
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QCOMPARE(step(), QStringLiteral("origin"));
+
+        press(QStringLiteral("Place Origin"));
+        w.click({ 400, 600 });
+        QCOMPARE(step(), QStringLiteral("direction"));
+        press(QStringLiteral("Place Direction"));
+        w.click({ 900, 600 });
+        QCOMPARE(step(), QString());
+        QVERIFY(!card->isVisible());
+        QCOMPARE(w.named(QStringLiteral("setupTitle"))->property("text").toString(),
+                 QStringLiteral("Setup \u2713 (photo, ruler, targets)"));
+
+        QMetaObject::invokeMethod(w.store, "undo");                  // Direction goes again
+        QVERIFY(card->isVisible());
+        QCOMPARE(step(), QStringLiteral("direction"));
+    }
+
+    // Minor 2: after Don't save and a refused Open, the still-unsaved track is backed up again.
+    void aDiscardedTrackIsBackedUpAgain()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        auto backup = [&]() {
+            QVariantMap found;
+            QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+            return found;
+        };
+        w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+        QMetaObject::invokeMethod(w.window, "backUp");
+        QVERIFY(!backup().isEmpty());
+        QMetaObject::invokeMethod(w.window, "openRecent", Q_ARG(QVariant, dir.filePath(QStringLiteral("Gone.cone"))));
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("unsavedDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        w.clickItem(findButton(w.window, QStringLiteral("Don't save")));
+        QTRY_VERIFY(backup().isEmpty());
+        QVERIFY(w.store->property("dirty").toBool());         // the open was refused: the track is still unsaved
+        QMetaObject::invokeMethod(w.window, "backUp");
+        QVERIFY(!backup().isEmpty());
+        QMetaObject::invokeMethod(files, "deleteBackup");
+    }
+
+    // Minor 3: a relative path on the command line is opened and kept as an absolute one.
+    void aRelativePathAtStartBecomesAbsolute()
+    {
+        const QString path = dir.filePath(QStringLiteral("Relative.cone"));
+        {
+            Loaded w;
+            QVERIFY(w.load(true));
+            QVariant ok;
+            QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+            QVERIFY(ok.toBool());
+        }
+        Loaded w;
+        QVERIFY(w.load(false));
+        // No backup from an earlier test, so start() goes straight to the file.
+        QMetaObject::invokeMethod(w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "deleteBackup");
+        const QString old = QDir::currentPath();
+        QDir::setCurrent(dir.path());
+        QMetaObject::invokeMethod(w.window, "start", Q_ARG(QVariant, QStringLiteral("Relative.cone")));
+        QDir::setCurrent(old);
+        QCOMPARE(w.store->property("elementCount").toInt(), 4);
+        QCOMPARE(w.store->property("filePath").toString(), QDir::toNativeSeparators(path));
+    }
+
+    // Minor 5: a long track name wraps in the unsaved-changes question.
+    void aLongNameWrapsInTheQuestion()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        w.store->setProperty("filePath", dir.filePath(QString(120, QChar('x')) + QStringLiteral(".cone")));
+        w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+        QMetaObject::invokeMethod(w.window, "newTrack");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("unsavedDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *question = w.named(QStringLiteral("unsavedQuestion"));
+        QVERIFY(question);
+        QVERIFY(question->property("lineCount").toInt() > 1);
+        QVERIFY(question->width() <= dialog->property("availableWidth").toDouble());
+        w.clickItem(findButton(w.window, QStringLiteral("Cancel")));
+    }
+
+    // Minor 6: Save As starts in the open track's folder with its name; an Untitled track has no start of its own.
+    void saveAsStartsBesideTheTrack()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QVariant start;
+        QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
+        QVERIFY(isNull(start));
+        const QString path = dir.filePath(QStringLiteral("Duck pond.cone"));
+        w.store->setProperty("filePath", path);
+        QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
+        const QVariantMap s = plain(start).toMap();
+        QCOMPARE(s.value("folder").toUrl(), QUrl::fromLocalFile(dir.path()));
+        QCOMPARE(s.value("file").toUrl(), QUrl::fromLocalFile(path));
+    }
+
+    // Minor 7: a backup that cannot be read says so once and is removed, so it is not offered again.
+    void anUnreadableBackupIsRemoved()
+    {
+        QString backupPath;
+        {
+            Loaded w;
+            QVERIFY(w.load(true));
+            w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+            QMetaObject::invokeMethod(w.window, "backUp");
+            QObject *files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+            QVariantMap found;
+            QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+            backupPath = found.value("path").toString();
+            QVERIFY(!backupPath.isEmpty());
+        }
+        QFile broken(backupPath);
+        QVERIFY(broken.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        broken.write("not a track");
+        broken.close();
+
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "start", Q_ARG(QVariant, QString()));
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("restoreDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        w.clickItem(findButton(w.window, QStringLiteral("Restore")));
+        QTRY_COMPARE(findBanner(w.window)->property("text").toString(),
+                     QStringLiteral("The backup couldn't be read and has been removed."));
+        QObject *files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        QVariantMap found;
+        QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+        QVERIFY(found.isEmpty());
+        QCOMPARE(w.store->property("elementCount").toInt(), 0);
+    }
+
+    // Final review: a picked-up tile is dropped when the track is replaced or setup comes undone.
+    void placingStopsWhenTheTrackChanges()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        w.clickItem(w.tile(QStringLiteral("ruler")));
+        w.click({ 300, 400 });                                       // the ruler's first end
+        QVERIFY(!isNull(w.canvas->property("rulerFirst")));
+        QMetaObject::invokeMethod(w.store, "newTrack");
+        QCOMPARE(w.canvas->property("placingBy").toString(), QString());
+        QVERIFY(isNull(w.canvas->property("rulerFirst")));
+
+        QMetaObject::invokeMethod(w.window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        w.clickItem(w.tile(QStringLiteral("straight")));
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("straight"));
+        w.run(QStringLiteral("setTarget"), { { "which", "direction" }, { "point", QVariant() } });   // setup undone
+        QCOMPARE(w.canvas->property("placingBy").toString(), QString());
+    }
+
+    // Final review: an element both backwards and folded lists both, one plain line each.
+    void aWarningCanSayTwoThings()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.store, "select", Q_ARG(QVariant, QStringLiteral("e3")));
+        QMetaObject::invokeMethod(w.store, "reverseSelected");
+        w.run(QStringLiteral("setProp"), { { "id", "e3" }, { "key", "radius" }, { "value", 1.0 } });
+        QVariant text;
+        QMetaObject::invokeMethod(w.canvas, "warningText", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, QStringLiteral("e3")));
+        QVERIFY2(!text.toString().contains(QChar('\r')), qPrintable(text.toString()));
+        const QStringList lines = text.toString().split(QChar('\n'));
+        QCOMPARE(lines.size(), 2);
+        QVERIFY(lines[0].startsWith(QStringLiteral("Runs against the track")));
+        QVERIFY(lines[1].startsWith(QStringLiteral("Folds in on itself")));
+    }
+
+    // Final review: right-click and Ctrl+click near an open end still act on the element, as before gate nodes.
+    void openEndsStillTakeRightAndCtrlClicks()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const double length = e1.value("props").toMap().value("length").toDouble();
+        const double x1 = e1.value("x").toDouble();
+        const double y1 = e1.value("y").toDouble();
+        w.click(w.screen(x1 - length / 2, y1), Qt::RightButton);    // e1's open A end
+        QObject *menu = w.window->findChild<QObject *>(QStringLiteral("elementMenu"));
+        QVERIFY(menu);
+        QTRY_VERIFY(menu->property("opened").toBool());
+        QCOMPARE(w.store->property("selectedId").toString(), QStringLiteral("e1"));
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->property("opened").toBool());
+
+        w.run(QStringLiteral("add"), { { "type", "straight" }, { "x", x1 }, { "y", y1 + 20 } });   // e5, free
+        QTest::mouseClick(w.window, Qt::LeftButton, Qt::ControlModifier, w.scene(w.screen(x1 - 10, y1 + 20)));
+        QCOMPARE(plain(w.store->property("selection")).toStringList(), QStringList({ QStringLiteral("e1"), QStringLiteral("e5") }));
     }
 };
 

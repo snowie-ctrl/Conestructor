@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Conestructor
 
-// One tile dragged from the side panel onto the canvas: a track element, the ruler or a target.
+// One tile in the side panel: click it to pick it up, or drag it onto the canvas. A track element, the ruler or a target.
 Rectangle {
     id: tile
     required property CanvasView canvas
@@ -21,6 +21,8 @@ Rectangle {
     radius: 6
     color: area.containsMouse && usable ? "#3a3a3a" : "#303030"
     opacity: usable ? 1 : 0.4
+    border.color: tile.canvas.placingBy === "click" && tile.canvas.placingKind === tile.kind ? "#2f6fd6" : "transparent"
+    border.width: 2
 
     Rectangle {
         anchors.left: parent.left
@@ -41,25 +43,41 @@ Rectangle {
     ToolTip.delay: 400
     ToolTip.text: !usable && lockedTip !== "" ? lockedTip : tip
 
+    // A press that moves less than a drag's distance before release is a click: it picks the tile up (the next canvas
+    // click puts it down). Further is a drag onto the canvas, as before.
     MouseArea {
         id: area
         anchors.fill: parent
         hoverEnabled: true
         preventStealing: true
+        property point pressedAt
+        property bool dragging: false
         onPressed: (mouse) => {
             if (!tile.usable) {
                 mouse.accepted = false
                 return
             }
-            tile.canvas.beginPlacing(tile.kind)
+            pressedAt = Qt.point(mouse.x, mouse.y)
+            dragging = false
         }
         onPositionChanged: (mouse) => {
             if (!pressed)
                 return
+            if (!dragging) {
+                if (Math.hypot(mouse.x - pressedAt.x, mouse.y - pressedAt.y) < Qt.styleHints.startDragDistance)
+                    return
+                dragging = true
+                tile.canvas.beginPlacing(tile.kind)
+            }
             const p = mapToItem(tile.canvas, mouse.x, mouse.y)
             tile.canvas.updatePlacing(p.x, p.y, (mouse.modifiers & Qt.ControlModifier) !== 0)
         }
         onReleased: (mouse) => {
+            if (!dragging) {
+                tile.canvas.clickTile(tile.kind)
+                return
+            }
+            dragging = false
             const p = mapToItem(tile.canvas, mouse.x, mouse.y)
             tile.canvas.finishPlacing(p.x, p.y)
         }
