@@ -29,6 +29,8 @@ ApplicationWindow {
     property var pendingAction: null
     // Set once the person has answered for the track, so closing does not ask twice.
     property bool closing: false
+    // False while a backup from an earlier session waits on the Restore question: closing then keeps it.
+    property bool backupAnswered: true
 
     function fitSoon() {
         canvasView.fitPending = true
@@ -88,7 +90,8 @@ ApplicationWindow {
 
     onClosing: (close) => {
         if (closing || !TrackStore.dirty) {
-            TrackFile.deleteBackup()
+            if (backupAnswered)
+                TrackFile.deleteBackup()
             return
         }
         close.accepted = false
@@ -134,6 +137,7 @@ ApplicationWindow {
     function start(file) {
         const backup = TrackFile.findBackup()
         if (backup.path) {
+            backupAnswered = false
             restoreDialog.backup = backup
             restoreDialog.file = file
             restoreDialog.open()
@@ -447,11 +451,13 @@ ApplicationWindow {
             Button { text: qsTr("Discard"); DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole }
         }
         onAccepted: {
+            window.backupAnswered = true
             if (TrackStore.restoreBackup(backup))
                 window.fitSoon()
             window.afterRestoreQuestion(file)
         }
         onDiscarded: {
+            window.backupAnswered = true
             restoreDialog.close()
             TrackFile.deleteBackup()
             window.afterRestoreQuestion(file)

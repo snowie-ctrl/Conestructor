@@ -11,6 +11,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUrl>
+#include <memory>
 
 #include "services/PhotoStore.h"
 #include "services/TrackFile.h"
@@ -192,6 +193,27 @@ private slots:
         QVERIFY(QDir::cleanPath(b.value(QStringLiteral("path")).toString()).startsWith(QDir::cleanPath(dir.path())));
         files.deleteBackup();
         QVERIFY(files.findBackup().isEmpty());
+    }
+
+    // A second window running at the same time neither offers, overwrites nor deletes the first window's backup;
+    // once the first has gone, its backup is the second's to offer.
+    void aSecondWindowLeavesTheFirstWindowsBackupAlone()
+    {
+        auto first = std::make_unique<TrackFile>();
+        first->deleteBackup();
+        QCOMPARE(first->writeBackup(document(), -1, QStringLiteral("C:/tracks/A.cone"), QStringLiteral("A")), QString());
+        {
+            TrackFile second;
+            QVERIFY(second.findBackup().isEmpty());
+            QVERIFY(!second.writeBackup(document(), -1, QString(), QStringLiteral("B")).isEmpty());
+            second.deleteBackup();
+        }
+        QCOMPARE(first->findBackup().value(QStringLiteral("name")).toString(), QStringLiteral("A"));
+        first.reset();
+        TrackFile later;
+        QCOMPARE(later.findBackup().value(QStringLiteral("name")).toString(), QStringLiteral("A"));
+        later.deleteBackup();
+        QVERIFY(later.findBackup().isEmpty());
     }
 };
 

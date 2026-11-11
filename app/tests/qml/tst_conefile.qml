@@ -50,8 +50,11 @@ TestCase {
         compare(d.cones[0].element, "e1")
         for (const c of d.cones) {
             verify(c.type === "standing" || c.type === "leaning", c.type)
+            if (c.type === "standing")
+                compare(c.heading, 0, "a standing cone has no heading (cone " + c.index + ")")
             verify(Math.abs(c.x * 1000 - Math.round(c.x * 1000)) < 1e-6, "x to the millimetre: " + c.x)
         }
+        verify(d.cones.some(c => c.type === "leaning" && c.heading !== 0), "leaning cones keep their headings")
         compare(d.units, "m")
         compare(d.axes, "x toward Direction target, y to the left, heading degrees counter-clockwise from +x")
     }

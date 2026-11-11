@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QQmlEngine>
 #include <QSaveFile>
 #include <QSettings>
@@ -30,6 +31,23 @@ QString backupNotes()
 }
 
 } // namespace
+
+TrackFile::TrackFile(QObject *parent) : QObject(parent) {}
+
+TrackFile::~TrackFile() = default;
+
+bool TrackFile::ownsBackup() const
+{
+    if (m_owns)
+        return true;
+    if (!m_lock) {
+        QDir().mkpath(backupDir());
+        m_lock = std::make_unique<QLockFile>(QDir(backupDir()).filePath(QStringLiteral("autosave.lock")));
+        m_lock->setStaleLockTime(0);     // only a lock whose process has gone is stale, however old
+    }
+    m_owns = m_lock->tryLock(0);
+    return m_owns;
+}
 
 QString TrackFile::toLocalPath(const QUrl &url) const
 {
@@ -128,7 +146,8 @@ QString TrackFile::backupDir()
 QString TrackFile::writeBackup(const QString &documentText, int photoRef, const QString &trackPath,
                                const QString &name)
 {
-    QDir().mkpath(backupDir());
+    if (!ownsBackup())
+        return tr("Another Conestructor window is keeping the backup.");
     const QString error = saveTo(backupFile(), documentText, photos(), photoRef);
     if (!error.isEmpty())
         return error;
@@ -142,7 +161,7 @@ QString TrackFile::writeBackup(const QString &documentText, int photoRef, const 
 
 QVariantMap TrackFile::findBackup() const
 {
-    if (!QFileInfo::exists(backupFile()))
+    if (!ownsBackup() || !QFileInfo::exists(backupFile()))
         return {};
     const QSettings notes(backupNotes(), QSettings::IniFormat);
     return { { QStringLiteral("path"), backupFile() },
@@ -153,6 +172,8 @@ QVariantMap TrackFile::findBackup() const
 
 void TrackFile::deleteBackup()
 {
+    if (!ownsBackup())
+        return;
     QFile::remove(backupFile());
     QFile::remove(backupNotes());
 }

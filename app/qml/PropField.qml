@@ -70,10 +70,13 @@ ColumnLayout {
     }
 
     onValueChanged: refresh()
-    // Shown at once even while typing: the values only become mixed or unmixed from outside this field.
+    // Values that become mixed empty the field at once, even with the cursor in it. Typing into a mixed field makes the
+    // values the same; that must not replace what is being typed.
     onMixedChanged: {
-        input.text = shown()
-        bad = false
+        if (mixed || !input.activeFocus) {
+            input.text = shown()
+            bad = false
+        }
     }
     onUnitChanged: {
         input.text = shown()

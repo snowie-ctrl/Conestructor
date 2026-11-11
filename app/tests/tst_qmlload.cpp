@@ -1073,6 +1073,84 @@ private slots:
         QCOMPARE(store->property("elementCount").toInt(), 4);
         QCOMPARE(label(), QStringLiteral("Delete 2 elements"));
     }
+    // Typing into a "mixed" field: the first key makes the values the same, and the rest of the typing still lands.
+    void typingIntoAMixedField()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(window));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QObject *settings = engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        auto width = [&](const QString &id) {
+            QVariant v;
+            QMetaObject::invokeMethod(store, "element", Q_RETURN_ARG(QVariant, v), Q_ARG(QVariant, id));
+            return qvariant_cast<QJSValue>(v).toVariant().toMap().value("props").toMap().value("trackWidth").toDouble();
+        };
+        for (const QString unit : { QStringLiteral("m"), QStringLiteral("ft"), QStringLiteral("ftin") }) {
+            settings->setProperty("units", unit);
+            QVariantMap wide{ { "id", "e1" }, { "key", "trackWidth" }, { "value", 6.0 } };
+            QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("setProp")), Q_ARG(QVariant, wide));
+            QMetaObject::invokeMethod(store, "seal");
+            QVariantList ids{ QStringLiteral("e1"), QStringLiteral("e4") };
+            QMetaObject::invokeMethod(store, "selectMany", Q_ARG(QVariant, QVariant(ids)), Q_ARG(QVariant, false));
+            QQuickItem *field = findField(window, QStringLiteral("Track width"));
+            QVERIFY(field);
+            QTRY_VERIFY(field->property("mixed").toBool());
+            QQuickItem *input = textBox(field);
+            QTest::mouseClick(window, Qt::LeftButton, {}, input->mapToScene(QPointF(input->width() / 2, input->height() / 2)).toPoint());
+            QTest::keyClick(window, '1');
+            QTest::keyClick(window, '2');
+            QVERIFY2(!field->property("bad").toBool(), qPrintable(unit + ": " + input->property("text").toString()));
+            const double expected = unit == QStringLiteral("m") ? 12.0 : 12 * 0.3048;
+            QVERIFY2(std::abs(width(QStringLiteral("e1")) - expected) < 1e-9, qPrintable(unit + ": " + QString::number(width(QStringLiteral("e1")))));
+            QVERIFY(std::abs(width(QStringLiteral("e4")) - expected) < 1e-9);
+            QTest::keyClick(window, Qt::Key_Escape);
+            QTest::keyClick(window, Qt::Key_Return);
+            QMetaObject::invokeMethod(store, "undo");
+            QMetaObject::invokeMethod(store, "undo");
+            QMetaObject::invokeMethod(store, "select", Q_ARG(QVariant, QString()));
+        }
+        settings->setProperty("units", QStringLiteral("ftin"));
+    }
+
+    // Closing the window while the Restore question is up keeps the backup for next time.
+    void closingDuringTheRestoreQuestionKeepsTheBackup()
+    {
+        auto backup = [](QQmlApplicationEngine &engine) {
+            QVariantMap found;
+            QMetaObject::invokeMethod(engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "findBackup",
+                                      Q_RETURN_ARG(QVariantMap, found));
+            return found;
+        };
+        {
+            QQmlApplicationEngine engine;
+            engine.loadFromModule("Conestructor", "Main");
+            QObject *window = engine.rootObjects().first();
+            QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+            QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+            QVariantMap move{ { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
+            QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, move));
+            QMetaObject::invokeMethod(window, "backUp");
+            QVERIFY(!backup(engine).isEmpty());
+        }
+        {
+            QQmlApplicationEngine engine;
+            engine.loadFromModule("Conestructor", "Main");
+            auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            QObject *dialog = window->findChild<QObject *>(QStringLiteral("restoreDialog"));
+            QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, QString()));
+            QTRY_VERIFY(dialog->property("opened").toBool());
+            window->close();
+            QTRY_VERIFY(!window->isVisible());
+            QVERIFY(!backup(engine).isEmpty());
+            QMetaObject::invokeMethod(engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "deleteBackup");
+        }
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

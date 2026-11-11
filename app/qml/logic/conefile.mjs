@@ -41,7 +41,8 @@ export function toDocument(track, info) {
     }
     const result = Post.run(track)
     const cones = result.error ? [] : result.cones.map(c => ({
-        index: c.index, type: c.type, x: round(c.x, 3), y: round(c.y, 3), heading: round(c.heading, 2), element: c.element
+        index: c.index, type: c.type, x: round(c.x, 3), y: round(c.y, 3),
+        heading: c.type === "standing" ? 0 : round(c.heading, 2), element: c.element
     }))
     const design = Commands.clone(track)
     design.photo = { kind: track.photo.kind, metresPerPixel: scale }
