@@ -378,8 +378,8 @@ private slots:
         settings->setProperty("units", QStringLiteral("ftin"));
     }
 
-    // Placing cones draws them; the toggles, Clear preview, the banners for what is missing, and the export file.
-    void thePreviewAndTheExport()
+    // Placing cones draws them; the toggles, Clear preview and the banners for what is missing.
+    void thePreviewAndItsBanners()
     {
         QQmlApplicationEngine engine;
         engine.loadFromModule("Conestructor", "Main");
@@ -426,20 +426,6 @@ private slots:
         QVariantMap args{ { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
         QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, args));
         QTRY_VERIFY(std::abs(cones().first()->x() - before) > 1);
-
-        // The export: metres, the axes sentence, the target distance, every cone.
-        QTemporaryDir out;
-        const QString path = out.filePath(QStringLiteral("cones.json"));
-        QMetaObject::invokeMethod(window, "exportCones");
-        QMetaObject::invokeMethod(window, "writeExport", Q_ARG(QVariant, QUrl::fromLocalFile(path)));
-        QFile file(path);
-        QVERIFY(file.open(QIODevice::ReadOnly));
-        const QJsonObject doc = QJsonDocument::fromJson(file.readAll()).object();
-        QCOMPARE(doc.value("units").toString(), QStringLiteral("m"));
-        QVERIFY(doc.value("axes").toString().contains(QStringLiteral("y to the left")));
-        QCOMPARE(doc.value("targetDistance").toDouble(), 100.0);
-        QCOMPARE(doc.value("cones").toArray().size(), placed());
-        QVERIFY(store->property("message").toString().startsWith(QStringLiteral("Exported ")));
 
         // Clear preview removes the overlay.
         QMetaObject::invokeMethod(store, "clearPreview");

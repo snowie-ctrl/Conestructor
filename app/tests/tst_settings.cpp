@@ -1,3 +1,4 @@
+#include <QDir>
 #include <QFile>
 #include <QSettings>
 #include <QSignalSpy>
@@ -104,6 +105,50 @@ private slots:
         QCOMPARE(s.units(), QStringLiteral("m"));
 
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+    }
+    void recentFilesAreNewestFirstAndAtMostEight()
+    {
+        Settings s;
+        QSignalSpy changed(&s, &Settings::recentFilesChanged);
+        for (int i = 1; i <= 10; ++i)
+            s.addRecentFile(QStringLiteral("C:/tracks/t%1.cone").arg(i));
+        QCOMPARE(s.recentFiles().size(), 8);
+        QCOMPARE(s.recentFiles().first(), QDir::toNativeSeparators(QStringLiteral("C:/tracks/t10.cone")));
+        QCOMPARE(s.recentFiles().last(), QDir::toNativeSeparators(QStringLiteral("C:/tracks/t3.cone")));
+        QCOMPARE(changed.count(), 10);
+    }
+
+    void aFileOpenedAgainMovesToTheTop()
+    {
+        Settings s;
+        s.addRecentFile(QStringLiteral("C:/tracks/a.cone"));
+        s.addRecentFile(QStringLiteral("C:/tracks/b.cone"));
+        s.addRecentFile(QStringLiteral("c:\\TRACKS\\a.cone"));     // the same file on Windows
+        QCOMPARE(s.recentFiles(), QStringList({ QStringLiteral("c:\\TRACKS\\a.cone"),
+                                                QDir::toNativeSeparators(QStringLiteral("C:/tracks/b.cone")) }));
+    }
+
+    void recentFilesCanBeRemovedAndCleared()
+    {
+        Settings s;
+        s.addRecentFile(QStringLiteral("C:/tracks/a.cone"));
+        s.addRecentFile(QStringLiteral("C:/tracks/b.cone"));
+        s.removeRecentFile(QStringLiteral("C:/tracks/a.cone"));
+        QCOMPARE(s.recentFiles().size(), 1);
+        s.clearRecentFiles();
+        QVERIFY(s.recentFiles().isEmpty());
+    }
+
+    void recentFilesSurviveARestart()
+    {
+        {
+            Settings s;
+            s.addRecentFile(QStringLiteral("C:/tracks/a.cone"));
+            s.setUnits(QStringLiteral("m"));
+        }
+        Settings again;
+        QCOMPARE(again.recentFiles(), QStringList({ QDir::toNativeSeparators(QStringLiteral("C:/tracks/a.cone")) }));
+        QCOMPARE(again.units(), QStringLiteral("m"));
     }
 };
 

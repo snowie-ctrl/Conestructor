@@ -16,5 +16,5 @@ conestructor_test(tst_qmlload
     LIBS conestructor_coreplugin Qt6::Qml Qt6::Quick Qt6::QuickControls2)
 
 conestructor_test(tst_settings SOURCES tst_settings.cpp LIBS conestructor_core)
-conestructor_test(tst_fileio SOURCES tst_fileio.cpp LIBS conestructor_core)
+conestructor_test(tst_trackfile SOURCES tst_trackfile.cpp LIBS conestructor_core)
 conestructor_test(tst_photostore SOURCES tst_photostore.cpp LIBS conestructor_core)

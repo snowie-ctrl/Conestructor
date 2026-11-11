@@ -56,7 +56,7 @@ qt_add_qml_module(conestructor_core
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp
-        services/FileIO.h services/FileIO.cpp
+        services/TrackFile.h services/TrackFile.cpp
         services/PhotoStore.h services/PhotoStore.cpp
     RESOURCES
         assets/images/blueprintBackground.png
