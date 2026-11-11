@@ -7,7 +7,8 @@ import "fixtures/sampletrack.mjs" as Sample
 
 // The spec's port check: the sample track through the prototype's cone code and through the new code gives the same
 // cones, once the prototype's feet become metres, its y (to the right) is flipped to the left, and its clockwise
-// headings become counter-clockwise.
+// headings become counter-clockwise. Part 2 orders cones by the arrows (tested in tst_postprocess), so here the
+// cones are compared as a set: every prototype cone must match one of ours exactly.
 TestCase {
     name: "PortCheck"
 
@@ -33,14 +34,16 @@ TestCase {
                                      Sample.prototypeTarget(t.targets.origin), Sample.prototypeTarget(t.targets.direction))
         compare(ours.cones.length, theirs.length)
         verify(theirs.length > 60, "a real sample: " + theirs.length + " cones")
+        const unmatched = ours.cones.slice()
         for (let i = 0; i < theirs.length; i++) {
-            const a = ours.cones[i]
             const b = theirs[i]
-            const where = "cone " + i
-            compare(a.type, b.coneType, where)
-            verify(Math.abs(a.x - b.x * Units.FOOT) < 1e-6, where + " x " + a.x + " vs " + b.x * Units.FOOT)
-            verify(Math.abs(a.y + b.y * Units.FOOT) < 1e-6, where + " y " + a.y + " vs " + (-b.y * Units.FOOT))
-            verify(angleGap(a.heading, -b.heading) < 1e-6, where + " heading " + a.heading + " vs " + (-b.heading))
+            const k = unmatched.findIndex(a => a.type === b.coneType
+                                          && Math.abs(a.x - b.x * Units.FOOT) < 1e-6
+                                          && Math.abs(a.y + b.y * Units.FOOT) < 1e-6
+                                          && angleGap(a.heading, -b.heading) < 1e-6)
+            verify(k >= 0, "prototype cone " + i + " (" + b.coneType + " at " + (b.x * Units.FOOT) + ", "
+                           + (-b.y * Units.FOOT) + ") has no match")
+            unmatched.splice(k, 1)
         }
     }
 }

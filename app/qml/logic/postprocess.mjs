@@ -1,7 +1,7 @@
 // Post-processing: every cone of the track, in driving order, in the export frame. Ported from the prototype's
-// qml/PostProcessor.qml and qml/elements/ConeUtils.js at 2c79b60: cones per element, duplicates at joins removed,
-// joined chains walked from an open end, separate chains stitched nearest end first. Tests:
-// tests/qml/tst_postprocess.qml and the port check (tests/qml/tst_portcheck.qml).
+// qml/PostProcessor.qml and qml/elements/ConeUtils.js at 2c79b60: cones per element, duplicates at joins removed.
+// Since part 2, joined chains are walked the way most of their elements point and separate chains are stitched by the
+// nearest start. Tests: tests/qml/tst_postprocess.qml and the port check (tests/qml/tst_portcheck.qml).
 import * as Elements from "./elements.mjs"
 import * as Frame from "./frame.mjs"
 import { FOOT } from "./units.mjs"
@@ -36,9 +36,9 @@ export function check(track) {
     return null
 }
 
-// Each element's cones in canvas metres, in the element's own order (entry A to exit B).
+// Each element's cones in canvas metres, in the element's own order (entry A to exit B), each naming its element.
 export function coneGroups(elements) {
-    return elements.map(el => ({ id: el.id, cones: Elements.conesWorld(el) }))
+    return elements.map(el => ({ id: el.id, cones: Elements.conesWorld(el).map(c => Object.assign(c, { element: el.id })) }))
 }
 
 // Removes the later of any two cones closer than epsilon (they meet at joins). Changes `groups`.
@@ -63,60 +63,105 @@ export function dedupe(groups, epsilon) {
     })
 }
 
-function walk(elements, groups, start, startEnd, visited) {
-    const out = []
+function byId(elements, id) {
+    return elements.find(e => e.id === id)
+}
+
+// One joined chain from `start`, entered at `enter`: [{ id, forward }] in walking order (forward = entered at A).
+function walkSteps(elements, start, enter) {
+    const steps = []
+    const seen = []
     let current = start
-    let enter = startEnd
-    while (current && visited.indexOf(current.id) < 0) {
-        visited.push(current.id)
-        const cones = groups.find(g => g.id === current.id).cones
-        if (enter === "B")
-            for (let i = cones.length - 1; i >= 0; i--) out.push(cones[i])
-        else
-            for (const c of cones) out.push(c)
-        const exit = enter === "A" ? "B" : "A"
-        const mate = current.joins[exit]
-        if (mate && visited.indexOf(mate.id) < 0) {
-            current = elements.find(e => e.id === mate.id)
-            enter = mate.end
+    let at = enter
+    while (current && seen.indexOf(current.id) < 0) {
+        seen.push(current.id)
+        steps.push({ id: current.id, forward: at === "A" })
+        const mate = current.joins[at === "A" ? "B" : "A"]
+        if (mate && seen.indexOf(mate.id) < 0) {
+            current = byId(elements, mate.id)
+            at = mate.end
         } else {
             current = null
         }
     }
+    return steps
+}
+
+// The same chain walked the other way. A closed loop keeps its first element first.
+function turnedAround(steps, loop) {
+    const order = loop ? [steps[0]].concat(steps.slice(1).reverse()) : steps.slice().reverse()
+    return order.map(s => ({ id: s.id, forward: !s.forward }))
+}
+
+// Walked the way most of its elements point; on a tie, the way its earliest element in the list points.
+function oriented(elements, steps, loop) {
+    const forward = steps.filter(s => s.forward).length
+    const backward = steps.length - forward
+    let turn = backward > forward
+    if (backward === forward) {
+        const index = id => elements.findIndex(e => e.id === id)
+        const earliest = steps.reduce((a, b) => index(b.id) < index(a.id) ? b : a)
+        turn = !earliest.forward
+    }
+    return turn ? turnedAround(steps, loop) : steps
+}
+
+// Every joined chain in driving order: chains with an open end in the order their first element appears in the list,
+// then closed loops from their earliest element.
+export function chains(elements) {
+    const visited = []
+    const out = []
+    for (const el of elements) {
+        if (visited.indexOf(el.id) >= 0 || (el.joins.A !== null && el.joins.B !== null))
+            continue
+        const steps = walkSteps(elements, el, el.joins.A === null ? "A" : "B")
+        steps.forEach(s => visited.push(s.id))
+        out.push(oriented(elements, steps, false))
+    }
+    for (const el of elements) {
+        if (visited.indexOf(el.id) >= 0)
+            continue
+        const steps = walkSteps(elements, el, "A")
+        steps.forEach(s => visited.push(s.id))
+        out.push(oriented(elements, steps, true))
+    }
     return out
 }
 
-// Cone lists, one per joined chain: chains with an open end are walked from it; closed loops from their first element.
+// The elements driven exit to entry: against the rest of their chain.
+export function backwards(elements) {
+    const out = []
+    for (const steps of chains(elements))
+        for (const s of steps)
+            if (!s.forward)
+                out.push(s.id)
+    return out
+}
+
+// Cone lists, one per joined chain, in driving order.
 export function buildChains(elements, groups) {
-    const visited = []
-    const chains = []
-    for (const el of elements) {
-        if (visited.indexOf(el.id) >= 0)
-            continue
-        const hasA = el.joins.A !== null
-        const hasB = el.joins.B !== null
-        if (hasA && hasB)
-            continue
-        const cones = walk(elements, groups, el, hasA ? "B" : "A", visited)
+    const out = []
+    for (const steps of chains(elements)) {
+        const cones = []
+        for (const s of steps) {
+            const own = groups.find(g => g.id === s.id).cones
+            if (s.forward)
+                for (const c of own) cones.push(c)
+            else
+                for (let i = own.length - 1; i >= 0; i--) cones.push(own[i])
+        }
         if (cones.length > 0)
-            chains.push(cones)
+            out.push(cones)
     }
-    for (const el of elements) {
-        if (visited.indexOf(el.id) >= 0)
-            continue
-        const cones = walk(elements, groups, el, "A", visited)
-        if (cones.length > 0)
-            chains.push(cones)
-    }
-    return chains
+    return out
 }
 
 function distance(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
-// Chains joined into one list: from the first, each next chain is whichever start or end is nearest, reversed if
-// its end was nearer.
+// Chains joined into one list: from the first, the next chain is the one whose start is nearest the end so far.
+// Chains are never reversed: each is driven the way its arrows point.
 export function stitch(chains) {
     if (chains.length === 0)
         return []
@@ -124,17 +169,11 @@ export function stitch(chains) {
     let ordered = remaining.shift().slice()
     while (remaining.length > 0) {
         const end = ordered[ordered.length - 1]
-        let best = -1
-        let reversed = false
-        let bestDistance = Infinity
-        remaining.forEach((chain, i) => {
-            const dStart = distance(end, chain[0])
-            const dEnd = distance(end, chain[chain.length - 1])
-            if (dStart < bestDistance) { bestDistance = dStart; best = i; reversed = false }
-            if (dEnd < bestDistance) { bestDistance = dEnd; best = i; reversed = true }
-        })
-        const chosen = remaining.splice(best, 1)[0]
-        ordered = ordered.concat(reversed ? chosen.slice().reverse() : chosen)
+        let best = 0
+        for (let i = 1; i < remaining.length; i++)
+            if (distance(end, remaining[i][0]) < distance(end, remaining[best][0]))
+                best = i
+        ordered = ordered.concat(remaining.splice(best, 1)[0])
     }
     return ordered
 }
@@ -151,8 +190,9 @@ export function run(track) {
     const canvasCones = []
     ordered.forEach((c, index) => {
         const q = Frame.toFrame(frame, c)
-        cones.push({ index: index, type: c.type, x: q.x, y: q.y, heading: Frame.headingToFrame(frame, c.heading) })
-        canvasCones.push({ index: index, type: c.type, x: c.x, y: c.y, heading: c.heading })
+        cones.push({ index: index, type: c.type, x: q.x, y: q.y, heading: Frame.headingToFrame(frame, c.heading),
+                     element: c.element })
+        canvasCones.push({ index: index, type: c.type, x: c.x, y: c.y, heading: c.heading, element: c.element })
     })
     return { cones: cones, canvasCones: canvasCones, targetDistance: frame.distance }
 }

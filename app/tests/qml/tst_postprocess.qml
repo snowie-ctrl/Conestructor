@@ -67,6 +67,7 @@ TestCase {
         ]))
         compare(t.elements[1].rotation, 180)
         compare(JSON.stringify(xs(Post.run(t))), JSON.stringify([0, 0, 10, 10, 20, 20, 30, 30, 40, 40]))
+        compare(JSON.stringify(Post.backwards(t.elements)), JSON.stringify(["e2"]))
     }
 
     function test_conesAtAJoinAreNotDoubled() {
@@ -79,12 +80,53 @@ TestCase {
         compare(Post.run(t).cones.length, 10)
     }
 
-    function test_separateChainsAreStitchedByNearestEnd() {
+    function test_separateChainsKeepTheirArrows() {
+        // The second straight points back toward the first (rotation 180): it is driven from its entry at x 70.
         const t = build(scale().concat(targets(), [
             ["add", { type: "straight", x: 10, y: 5 }],
             ["add", { type: "straight", x: 60, y: 5, rotation: 180 }]
         ]))
-        compare(JSON.stringify(xs(Post.run(t))), JSON.stringify([0, 0, 10, 10, 20, 20, 50, 50, 60, 60, 70, 70]))
+        compare(JSON.stringify(xs(Post.run(t))), JSON.stringify([0, 0, 10, 10, 20, 20, 70, 70, 60, 60, 50, 50]))
+    }
+
+    function test_aChainBuiltBackwardsIsDrivenTheWayItsArrowsPoint() {
+        // e2 is added in front of e1 (its exit joins e1's entry), so the chain is driven e2 then e1.
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "straight", x: 10, y: 5 }],
+            ["add", { type: "straight", x: 0, y: 0, snap: { ownEnd: "B", id: "e1", end: "A" } }]
+        ]))
+        compare(JSON.stringify(xs(Post.run(t))), JSON.stringify([-20, -20, -10, -10, 0, 0, 10, 10, 20, 20]))
+        compare(JSON.stringify(Post.backwards(t.elements)), "[]")
+    }
+
+    function test_theMajorityDecides() {
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "straight", x: 10, y: 5 }],
+            ["add", { type: "straight", x: 0, y: 0, snap: { ownEnd: "A", id: "e1", end: "B" } }],
+            ["add", { type: "straight", x: 0, y: 0, snap: { ownEnd: "B", id: "e2", end: "B" } }]     // e3 faces back
+        ]))
+        compare(JSON.stringify(xs(Post.run(t))), JSON.stringify([0, 0, 10, 10, 20, 20, 30, 30, 40, 40, 50, 50, 60, 60]))
+        compare(JSON.stringify(Post.backwards(t.elements)), JSON.stringify(["e3"]))
+        const steps = Post.chains(t.elements)
+        compare(steps.length, 1)
+        compare(JSON.stringify(steps[0]), JSON.stringify([{ id: "e1", forward: true }, { id: "e2", forward: true },
+                                                          { id: "e3", forward: false }]))
+    }
+
+    function test_aClosedLoopStartsAtItsEarliestElement() {
+        const turn = { angle: 90, radius: 6, leadIn: 0, leadOut: 0 }
+        let t = build(scale().concat(targets(), [
+            ["add", { type: "turn", x: 20, y: 20, props: turn }],
+            ["add", { type: "turn", x: 0, y: 0, props: turn, snap: { ownEnd: "A", id: "e1", end: "B" } }],
+            ["add", { type: "turn", x: 0, y: 0, props: turn, snap: { ownEnd: "A", id: "e2", end: "B" } }],
+            ["add", { type: "turn", x: 0, y: 0, props: turn, snap: { ownEnd: "A", id: "e3", end: "B" } }]
+        ]))
+        t = Commands.clone(t)
+        Snapping.join(t.elements, "e4", "B", "e1", "A")
+        const steps = Post.chains(t.elements)
+        compare(steps.length, 1)
+        compare(steps[0].map(s => s.id).join(","), "e1,e2,e3,e4")
+        verify(steps[0].every(s => s.forward))
     }
 
     function test_yIsToTheLeftOfTheAxis() {
@@ -117,5 +159,7 @@ TestCase {
         const r = Post.run(t)
         compare(r.canvasCones.length, r.cones.length)
         compare(r.canvasCones[3].type, r.cones[3].type)
+        compare(r.cones[3].element, "e1")
+        compare(r.canvasCones[3].element, "e1")
     }
 }
