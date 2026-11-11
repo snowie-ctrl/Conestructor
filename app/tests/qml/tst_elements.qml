@@ -150,7 +150,7 @@ TestCase {
             { tag: "fine", type: "straight", key: "trackWidth", value: 4, expected: 4, clamped: false },
             { tag: "counts are whole", type: "slalom", key: "coneCount", value: 4.6, expected: 5, clamped: false },
             { tag: "unknown choice", type: "slalom", key: "firstTurn", value: "up", expected: "left", clamped: true },
-            { tag: "angle over 180", type: "turn", key: "angle", value: 270, expected: 180, clamped: true },
+            { tag: "angle over 360", type: "turn", key: "angle", value: 400, expected: 360, clamped: true },
             { tag: "not a number", type: "turn", key: "radius", value: NaN, expected: 1, clamped: true }
         ]
     }
