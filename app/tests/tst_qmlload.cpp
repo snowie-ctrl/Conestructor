@@ -660,6 +660,130 @@ private slots:
         click(QStringLiteral("Don't save"));
         QTRY_VERIFY(!window->isVisible());
     }
+    // A track named on the command line opens at start-up.
+    void aFileNamedAtStartOpens()
+    {
+        const QString path = dir.filePath(QStringLiteral("Start.cone"));
+        {
+            QQmlApplicationEngine engine;
+            engine.loadFromModule("Conestructor", "Main");
+            QObject *window = engine.rootObjects().first();
+            QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+            // No backup from an earlier test, so start() goes straight to the file.
+            QMetaObject::invokeMethod(engine.singletonInstance<QObject *>("Conestructor", "TrackFile"), "deleteBackup");
+            QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+            QVariant ok;
+            QMetaObject::invokeMethod(store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+            QVERIFY(ok.toBool());
+        }
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, path));
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Start"));
+    }
+
+    // Unsaved changes are backed up; at the next start the backup is offered; Discard forgets it; Save removes it.
+    void aBackupIsOfferedAtStart()
+    {
+        auto click = [](QQuickWindow *window, const QString &text) {
+            QQuickItem *button = findButton(window, text);
+            QVERIFY2(button, qPrintable(text));
+            QTest::mouseClick(window, Qt::LeftButton, {},
+                              button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+        };
+        auto backup = [](QQmlApplicationEngine &engine) {
+            QObject *files = engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+            QVariantMap found;
+            QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+            return found;
+        };
+        {
+            QQmlApplicationEngine engine;
+            engine.loadFromModule("Conestructor", "Main");
+            QObject *window = engine.rootObjects().first();
+            QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+            QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+            QMetaObject::invokeMethod(window, "backUp");
+            QVERIFY(backup(engine).isEmpty());                       // nothing unsaved, nothing backed up
+            QVariantMap move{ { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
+            QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, move));
+            QMetaObject::invokeMethod(window, "backUp");
+            QCOMPARE(backup(engine).value(QStringLiteral("name")).toString(), QStringLiteral("Untitled"));
+            // engine goes without a normal close: the backup stays, as after a crash
+        }
+        {
+            QQmlApplicationEngine engine;
+            engine.loadFromModule("Conestructor", "Main");
+            auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+            QObject *dialog = window->findChild<QObject *>(QStringLiteral("restoreDialog"));
+            QVERIFY(dialog);
+            QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, QString()));
+            QTRY_VERIFY(dialog->property("opened").toBool());
+            click(window, QStringLiteral("Restore"));
+            QTRY_COMPARE(store->property("elementCount").toInt(), 4);
+            QVERIFY(store->property("dirty").toBool());
+            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Untitled*"));
+            QVERIFY(!backup(engine).isEmpty());                      // kept until saved or closed normally
+            const QString path = dir.filePath(QStringLiteral("Restored.cone"));
+            QVariant ok;
+            QMetaObject::invokeMethod(store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+            QVERIFY(ok.toBool());
+            QVERIFY(backup(engine).isEmpty());
+        }
+        {
+            QQmlApplicationEngine engine;
+            engine.loadFromModule("Conestructor", "Main");
+            auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+            QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+            QVariantMap move{ { "id", "e2" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
+            QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, move));
+            QMetaObject::invokeMethod(window, "backUp");
+            QMetaObject::invokeMethod(store, "newTrack");
+            QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, QString()));
+            QObject *dialog = window->findChild<QObject *>(QStringLiteral("restoreDialog"));
+            QTRY_VERIFY(dialog->property("opened").toBool());
+            click(window, QStringLiteral("Discard"));
+            QTRY_VERIFY(backup(engine).isEmpty());
+            QCOMPARE(store->property("elementCount").toInt(), 0);
+        }
+    }
+
+    // Dropping a .cone opens it, a PNG or JPG becomes the lot photo, anything else gets a note.
+    void droppingFilesOnTheWindow()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        const QString track = dir.filePath(QStringLiteral("Dropped.cone"));
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QVariant ok;
+        QMetaObject::invokeMethod(store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, track));
+        QMetaObject::invokeMethod(store, "newTrack");
+
+        QMetaObject::invokeMethod(window, "dropped", Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(track))));
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+
+        QImage image(40, 30, QImage::Format_RGB32);
+        image.fill(Qt::gray);
+        const QString picture = dir.filePath(QStringLiteral("dropped.jpg"));
+        QVERIFY(image.save(picture));
+        QMetaObject::invokeMethod(window, "dropped", Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(picture))));
+        QCOMPARE(qvariant_cast<QJSValue>(store->property("track")).property("photo").property("kind").toString(),
+                 QStringLiteral("image"));
+
+        QMetaObject::invokeMethod(window, "dropped",
+                                  Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(dir.filePath(QStringLiteral("notes.txt"))))));
+        QCOMPARE(findBanner(window)->property("text").toString(), QStringLiteral("Drop a .cone track or a PNG or JPG photo."));
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

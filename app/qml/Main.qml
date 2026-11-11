@@ -129,6 +129,57 @@ ApplicationWindow {
             TrackStore.placeCones()
     }
 
+    // Called once by main.cpp when the window opens: offers a backup left by a crash, then opens `file` (the track
+    // named on the command line, or "").
+    function start(file) {
+        const backup = TrackFile.findBackup()
+        if (backup.path) {
+            restoreDialog.backup = backup
+            restoreDialog.file = file
+            restoreDialog.open()
+        } else if (file !== "") {
+            openTrack(file)
+        }
+    }
+
+    function afterRestoreQuestion(file) {
+        if (file !== "")
+            whenSaved(() => window.openTrack(file))
+    }
+
+    // A file dropped on the window: a .cone opens, a PNG or JPG becomes the lot photo.
+    function dropped(url) {
+        const path = TrackFile.toLocalPath(url)
+        const lower = path.toLowerCase()
+        if (lower.endsWith(".cone"))
+            whenSaved(() => window.openTrack(path))
+        else if (/\.(png|jpe?g)$/.test(lower))
+            loadPhoto(url)
+        else
+            TrackStore.report(qsTr("Drop a .cone track or a PNG or JPG photo."), null)
+    }
+
+    // The track text last backed up, so an unchanged track is not written again.
+    property string backedUpText: ""
+
+    // Every two minutes: backs up unsaved changes that are not backed up yet. A failed write says nothing (it is a
+    // safety net) and is tried again next time.
+    function backUp() {
+        if (!TrackStore.dirty || TrackStore.trackText === backedUpText)
+            return
+        const error = TrackFile.writeBackup(TrackStore.documentText(TrackStore.name), TrackStore.photoRef(),
+                                            TrackStore.filePath, TrackStore.name)
+        if (error === "")
+            backedUpText = TrackStore.trackText
+    }
+
+    Timer {
+        interval: 120000
+        repeat: true
+        running: true
+        onTriggered: window.backUp()
+    }
+
     function conesPlaced() {
         return TrackStore.previewOn && TrackStore.preview ? TrackStore.preview.cones.length : 0
     }
@@ -297,6 +348,16 @@ ApplicationWindow {
         }
     }
 
+    DropArea {
+        anchors.fill: parent
+        onDropped: (drop) => {
+            if (drop.hasUrls && drop.urls.length > 0) {
+                drop.accept(Qt.CopyAction)
+                window.dropped(drop.urls[0])
+            }
+        }
+    }
+
     footer: StatusBar { canvas: canvasView }
 
     FileDialog {
@@ -350,6 +411,38 @@ ApplicationWindow {
             action()
         }
         onRejected: window.pendingAction = null
+    }
+
+    Dialog {
+        id: restoreDialog
+        objectName: "restoreDialog"
+        property var backup: ({})
+        property string file: ""
+        implicitWidth: 460      // fixed: Fusion's Dialog sizing loops with a custom button box
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        closePolicy: Popup.NoAutoClose
+        title: qsTr("Restore unsaved work?")
+        Label {
+            width: restoreDialog.availableWidth
+            wrapMode: Text.WordWrap
+            text: qsTr("Conestructor closed without saving %1 (backed up at %2). Restore it?")
+                  .arg(restoreDialog.backup.name || "").arg(restoreDialog.backup.time || "")
+        }
+        footer: DialogButtonBox {
+            Button { text: qsTr("Restore"); DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
+            Button { text: qsTr("Discard"); DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole }
+        }
+        onAccepted: {
+            if (TrackStore.restoreBackup(backup))
+                window.fitSoon()
+            window.afterRestoreQuestion(file)
+        }
+        onDiscarded: {
+            restoreDialog.close()
+            TrackFile.deleteBackup()
+            window.afterRestoreQuestion(file)
+        }
     }
 
     PreferencesDialog { id: preferences }

@@ -30,6 +30,10 @@ int main(int argc, char *argv[])
         return -1;
     QObject *root = engine.rootObjects().first();
 
+    // Offer a backup left by a crash, then open the track named on the command line (Conestructor.exe "x.cone").
+    const QStringList args = QCoreApplication::arguments();
+    QMetaObject::invokeMethod(root, "start", Q_ARG(QVariant, QVariant(args.size() > 1 ? args.at(1) : QString())));
+
     // Dev affordance for screenshots: open on the example track ("track"), with its cones placed ("cones").
     // Does nothing unless set.
     const QString demo = qEnvironmentVariable("CONESTRUCTOR_DEMO");

@@ -183,6 +183,18 @@ QtObject {
         return true
     }
 
+    // Opens the autosave backup as unsaved changes to the track it came from (`backup` from TrackFile.findBackup).
+    function restoreBackup(backup) {
+        const read = readTrack(backup.path)
+        if (!read)
+            return false
+        filePath = backup.trackPath
+        show(read)
+        savedText = ""          // nothing on disk matches it: it stays unsaved until saved
+        message = qsTr("Restored %1 from the backup made at %2").arg(name).arg(backup.time)
+        return true
+    }
+
     // A key shared by every step of one drag, so the drag undoes as one step.
     function newGestureKey() {
         gestureSerial += 1
