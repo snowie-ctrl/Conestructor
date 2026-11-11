@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Conestructor VERSION 0.2.0 LANGUAGES CXX)
+project(Conestructor VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,6 +35,8 @@ qt_add_qml_module(conestructor_core
         qml/StatusBar.qml
         qml/ErrorBanner.qml
         qml/ElementPalette.qml
+        qml/SetupChecklist.qml
+        qml/PaletteTile.qml
         qml/RulerView.qml
         qml/TargetsView.qml
         qml/ConePreview.qml
@@ -50,10 +52,14 @@ qt_add_qml_module(conestructor_core
         qml/logic/postprocess.mjs
         qml/logic/viewport.mjs
         qml/logic/demo.mjs
+        qml/logic/selection.mjs
+        qml/logic/setup.mjs
+        qml/logic/conefile.mjs
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp
-        services/FileIO.h services/FileIO.cpp
+        services/TrackFile.h services/TrackFile.cpp
+        services/PhotoStore.h services/PhotoStore.cpp
     RESOURCES
         assets/images/blueprintBackground.png
         assets/images/crosshair.svg

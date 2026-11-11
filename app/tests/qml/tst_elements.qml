@@ -201,4 +201,89 @@ TestCase {
         compare(Elements.normalizeAngle(-180), -180)
         compare(Elements.normalizeAngle(720), 0)
     }
+
+    function samePoint(a, b, tolerance, what) {
+        verify(Math.hypot(a.x - b.x, a.y - b.y) <= tolerance,
+               what + ": (" + a.x + ", " + a.y + ") vs (" + b.x + ", " + b.y + ")")
+    }
+
+    function sameHeading(a, b, what) {
+        const d = ((((a - b) % 360) + 540) % 360) - 180
+        verify(Math.abs(d) < 1e-6, what + ": " + a + " vs " + b)
+    }
+
+    function test_reversedKeepsTheFootprint_data() {
+        return [
+            { tag: "straight", type: "straight", props: {} },
+            { tag: "slalom, 4 cones", type: "slalom", props: { leadIn: 3, leadOut: 9 } },
+            { tag: "slalom, 3 cones, right first", type: "slalom", props: { coneCount: 3, firstTurn: "right" } },
+            { tag: "chicane, uneven leads", type: "chicane", props: { leadIn: 2, leadOut: 11 } },
+            { tag: "chicane right", type: "chicane", props: { direction: "right" } },
+            { tag: "turn", type: "turn", props: {} },
+            { tag: "turn, changing, left", type: "turn",
+              props: { radiusType: "changing", radius: 6, exitRadius: 14, angle: 135, direction: "left", leadIn: 2 } },
+            { tag: "turn of 0 degrees", type: "turn", props: { angle: 0 } },
+            { tag: "turn, wide", type: "turn", props: { radius: 100, angle: 180 } }
+        ]
+    }
+
+    function test_reversedKeepsTheFootprint(row) {
+        const a = el("e1", row.type, row.props, 12, -7, 33)
+        const b = Object.assign({}, a, Elements.reversed(a))
+        const ea = Elements.endsWorld(a)
+        const eb = Elements.endsWorld(b)
+        samePoint(eb.A, ea.B, 1e-6, "new entry at the old exit")
+        samePoint(eb.B, ea.A, 1e-6, "new exit at the old entry")
+        sameHeading(eb.A.heading, ea.B.heading, "entry faces where the exit did")
+        sameHeading(eb.B.heading, ea.A.heading, "exit faces where the entry did")
+        const p = Elements.pathWorld(a)
+        const q = Elements.pathWorld(b).slice().reverse()
+        compare(q.length, p.length)
+        for (let i = 0; i < p.length; i++)
+            samePoint(q[i], p[i], 1e-6, "path point " + i)
+    }
+
+    function test_reversedPropsSaysTheSameThingTheOtherWay() {
+        const t = Elements.reversedProps("turn", Object.assign(Elements.defaults("turn"),
+                                         { leadIn: 2, leadOut: 8, radiusType: "changing", radius: 6, exitRadius: 12 }))
+        compare(t.direction, "left")
+        compare(t.leadIn, 8)
+        compare(t.leadOut, 2)
+        compare(t.radius, 12)
+        compare(t.exitRadius, 6)
+        compare(Elements.reversedProps("turn", Elements.defaults("turn")).exitRadius, 10)   // constant: untouched
+        compare(Elements.reversedProps("slalom", Elements.defaults("slalom")).firstTurn, "left")    // 4 cones
+        compare(Elements.reversedProps("slalom", Object.assign(Elements.defaults("slalom"), { coneCount: 3 })).firstTurn,
+                "right")
+        compare(Elements.reversedProps("chicane", Elements.defaults("chicane")).direction, "left")
+    }
+
+    function test_pointsAlongAStraight() {
+        const s = el("e1", "straight", {}, 5, 5, 0)
+        const p = Elements.pointsAlong(s, [0, 0.5, 1])
+        samePoint(p[0], { x: -5, y: 5 }, 1e-9, "start")
+        samePoint(p[1], { x: 5, y: 5 }, 1e-9, "middle")
+        samePoint(p[2], { x: 15, y: 5 }, 1e-9, "end")
+        compare(p[1].heading, 0)
+        compare(Elements.pointsAlong(el("e2", "straight", {}, 0, 0, 90), [0.5])[0].heading, 90)
+        fuzzyCompare(Elements.pathLength(s), 20, 1e-9)
+    }
+
+    function test_pointsAlongSkipsAnEmptyLead() {
+        const t = el("e1", "turn", { leadIn: 0, leadOut: 0 }, 0, 0, 0)
+        verify(Math.abs(Elements.pointsAlong(t, [0])[0].heading) < 1, "starts heading along +x")
+    }
+
+    function test_arrowMarks() {
+        compare(Elements.arrowMarks(el("e1", "straight", {}), 8).length, 3)               // 20 m
+        compare(Elements.arrowMarks(el("e1", "straight", { length: 4 }), 8).length, 2)    // at least two
+        const marks = Elements.arrowMarks(el("e1", "straight", {}, 0, 0, 0), 8)
+        fuzzyCompare(marks[0].x, -10 + 20 / 6, 1e-9)
+    }
+
+    function test_aHalfTurnIsATrueArc() {
+        const g = Elements.geometry("turn", Object.assign(Elements.defaults("turn"), { leadIn: 0, leadOut: 0 }))
+        near(g.ends.B.x - g.ends.A.x, 0, 1e-3, "level with the entry")
+        near(g.ends.B.y - g.ends.A.y, 12, 1e-3, "exactly a 12 m diameter")
+    }
 }

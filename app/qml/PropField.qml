@@ -14,6 +14,9 @@ ColumnLayout {
     required property var def
     required property var value
     property bool emptyWhenZero: false
+    property real stepSize: 0       // what the arrows step by; 0 means the unit's usual step
+    property real bigStep: 0        // what Shift+arrow steps by; 0 means the same as the arrows
+    property bool mixed: false      // several elements with different values: the field shows "mixed"
     signal edited(var newValue)
     signal finished()
 
@@ -26,6 +29,8 @@ ColumnLayout {
     spacing: 2
 
     function shown() {
+        if (mixed)
+            return ""
         if (emptyWhenZero && !(value > 0))
             return ""
         return Units.formatValue(def.kind, value, unit)
@@ -55,13 +60,24 @@ ColumnLayout {
             apply(parsed)
     }
 
-    function step(direction) {
-        const stored = apply(Number(value) + direction * Units.stepFor(def.kind, unit))
+    function step(direction, big) {
+        if (mixed)
+            return
+        const size = big && bigStep > 0 ? bigStep : stepSize > 0 ? stepSize : Units.stepFor(def.kind, unit)
+        const stored = apply(Number(value) + direction * size)
         input.text = Units.formatValue(def.kind, stored, unit)
         bad = false
     }
 
     onValueChanged: refresh()
+    // Values that become mixed empty the field at once, even with the cursor in it. Typing into a mixed field makes the
+    // values the same; that must not replace what is being typed.
+    onMixedChanged: {
+        if (mixed || !input.activeFocus) {
+            input.text = shown()
+            bad = false
+        }
+    }
     onUnitChanged: {
         input.text = shown()
         bad = false
@@ -88,7 +104,7 @@ ColumnLayout {
                     required property int index
                     text: field.def.labels[index]
                     checkable: true
-                    checked: field.value === field.def.choices[index]
+                    checked: !field.mixed && field.value === field.def.choices[index]
                     focusPolicy: Qt.NoFocus
                     // Only `edited`: a choice can change which settings show, and the panel then rebuilds this field
                     // before the handler returns. The panel ends the undo step for choices.
@@ -102,7 +118,7 @@ ColumnLayout {
             visible: !field.isChoice
             Layout.fillWidth: true
             color: field.bad ? "#ff6b6b" : "#f0f0f0"
-            placeholderText: field.emptyWhenZero ? qsTr("Type it here") : ""
+            placeholderText: field.mixed ? qsTr("mixed") : field.emptyWhenZero ? qsTr("Type it here") : ""
             selectByMouse: true
             onTextEdited: field.typed(text)
             onEditingFinished: {
@@ -115,8 +131,8 @@ ColumnLayout {
                 field.note = ""
                 text = field.shown()
             }
-            Keys.onUpPressed: field.step(1)
-            Keys.onDownPressed: field.step(-1)
+            Keys.onUpPressed: (e) => field.step(1, (e.modifiers & Qt.ShiftModifier) !== 0)
+            Keys.onDownPressed: (e) => field.step(-1, (e.modifiers & Qt.ShiftModifier) !== 0)
         }
 
         ColumnLayout {
@@ -127,14 +143,14 @@ ColumnLayout {
                 font.pixelSize: 9
                 implicitHeight: 15
                 focusPolicy: Qt.NoFocus
-                onClicked: { field.step(1); field.finished() }
+                onClicked: { field.step(1, false); field.finished() }
             }
             ToolButton {
                 text: "▼"
                 font.pixelSize: 9
                 implicitHeight: 15
                 focusPolicy: Qt.NoFocus
-                onClicked: { field.step(-1); field.finished() }
+                onClicked: { field.step(-1, false); field.finished() }
             }
         }
     }

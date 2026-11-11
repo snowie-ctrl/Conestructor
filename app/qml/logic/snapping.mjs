@@ -173,3 +173,82 @@ export function unjoinApart(elements) {
         }
     }
 }
+
+// Every element joined to `id`, directly or through others; `id` first.
+export function chainOf(elements, id) {
+    const out = [id]
+    for (let i = 0; i < out.length; i++) {
+        const el = byId(elements, out[i])
+        for (const end of ["A", "B"]) {
+            const mate = el.joins[end]
+            if (mate && out.indexOf(mate.id) < 0)
+                out.push(mate.id)
+        }
+    }
+    return out
+}
+
+// Turns elements `ids` as one about `pivot` (canvas metres) by `degrees` (clockwise on screen). Changes them.
+export function turnAbout(elements, ids, pivot, degrees) {
+    const r = degrees * Math.PI / 180
+    const c = Math.cos(r)
+    const s = Math.sin(r)
+    for (const id of ids) {
+        const el = byId(elements, id)
+        const dx = el.x - pivot.x
+        const dy = el.y - pivot.y
+        el.x = pivot.x + dx * c - dy * s
+        el.y = pivot.y + dx * s + dy * c
+        el.rotation = Elements.normalizeAngle(el.rotation + degrees)
+    }
+}
+
+// The nearest pairing, within maxDistance, of an open end of `group` (elements as they would land) with an open end of
+// an element outside it: { ownId, ownEnd, targetId, targetEnd, distance } or null. Ends joined inside the group are not
+// open; an outside end joined to a group member counts as open (the drag unjoins it).
+export function findGroupSnap(elements, group, maxDistance) {
+    const ids = group.map(g => g.id)
+    let best = null
+    let bestDistance = maxDistance
+    for (const g of group) {
+        const own = Elements.endsWorld(g)
+        for (const ownEnd of ["A", "B"]) {
+            const mate = g.joins[ownEnd]
+            if (mate && ids.indexOf(mate.id) >= 0)
+                continue
+            for (const el of elements) {
+                if (ids.indexOf(el.id) >= 0)
+                    continue
+                const ends = Elements.endsWorld(el)
+                for (const targetEnd of ["A", "B"]) {
+                    const theirs = el.joins[targetEnd]
+                    if (theirs && ids.indexOf(theirs.id) < 0)
+                        continue
+                    const d = Math.hypot(own[ownEnd].x - ends[targetEnd].x, own[ownEnd].y - ends[targetEnd].y)
+                    if (d < bestDistance) {
+                        bestDistance = d
+                        best = { ownId: g.id, ownEnd: ownEnd, targetId: el.id, targetEnd: targetEnd, distance: d }
+                    }
+                }
+            }
+        }
+    }
+    return best
+}
+
+// Copies of `group`, turned and shifted as one so that `ownEnd` of member `ownId` meets `target`'s `targetEnd`,
+// facing the opposite way.
+export function groupToJoin(group, ownId, ownEnd, target, targetEnd) {
+    const own = group.find(g => g.id === ownId)
+    const placed = placeToJoin(own, ownEnd, target, targetEnd)
+    const copies = group.map(g => Object.assign({}, g))
+    turnAbout(copies, copies.map(c => c.id), { x: own.x, y: own.y }, Elements.normalizeAngle(placed.rotation - own.rotation))
+    const dx = placed.x - own.x
+    const dy = placed.y - own.y
+    for (const c of copies) {
+        c.x += dx
+        c.y += dy
+    }
+    Object.assign(copies.find(c => c.id === ownId), placed)
+    return copies
+}

@@ -19,6 +19,8 @@ $env:PATH = "$tools\CMake_64\bin;$qt\bin;$env:PATH"
 $env:QT_QPA_PLATFORM = 'offscreen'
 # The offscreen platform looks for fonts in the Qt install, which ships none, and warns in every GUI test.
 $env:QT_QPA_FONTDIR = Join-Path $src 'assets\fonts\Ubuntu_Mono'
+# tst_conefile reads docs/cone-format.schema.json with XMLHttpRequest, which QML allows for local files only when asked.
+$env:QML_XHR_ALLOW_FILE_READ = '1'
 
 # ---- C++ tests ----
 $ctestPassed = $true

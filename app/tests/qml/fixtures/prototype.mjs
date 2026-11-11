@@ -2,8 +2,9 @@
 // Conestructor/qml/elements/ConeUtils.js, Straight.qml, Slalom.qml, Chicane.qml, Hairpin.qml and PostProcessor.qml:
 // QML property reads became reads from a plain element object `el` (prototype property names), Qt.point became
 // {x, y}, the duplicated ConeUtils functions appear once, and nothing else changed. Pixels and feet, y down the
-// screen, headings clockwise. Do not fix anything here: this is what the new code is compared against. The one
-// exception is marked OWNER'S CORRECTION (the slalom pointer cones).
+// screen, headings clockwise. Do not fix anything here: this is what the new code is compared against. The
+// exceptions are marked OWNER'S CORRECTION (the slalom pointer cones) and PART 2 CHANGE (turn steps follow the
+// heading at their middle).
 
 // ---- ConeUtils.js ----
 
@@ -373,7 +374,9 @@ function hairpinShape(el) {
         var r = radiusAtTheta(el, thetaMid)
         var dThetaRad = dThetaDeg * Math.PI / 180
         var ds = r * dThetaRad
-        var headingRad = heading * Math.PI / 180
+        // PART 2 CHANGE (2026-11-10): each step follows the heading at its middle, so turns are true arcs and a
+        // reversed turn retraces its footprint. The prototype had `heading * Math.PI / 180` here.
+        var headingRad = (heading + turnSign * dThetaDeg / 2) * Math.PI / 180
 
         x += ds * Math.cos(headingRad)
         y += ds * Math.sin(headingRad)
@@ -454,7 +457,9 @@ function hairpinCones(el, pixelsPerFoot) {
         var r = radiusAtTheta(el, thetaMid)
         var dThetaRad = dThetaDeg * Math.PI / 180
         var ds = r * dThetaRad
-        var headingRad = heading * Math.PI / 180
+        // PART 2 CHANGE (2026-11-10): each step follows the heading at its middle, so turns are true arcs and a
+        // reversed turn retraces its footprint. The prototype had `heading * Math.PI / 180` here.
+        var headingRad = (heading + turnSign * dThetaDeg / 2) * Math.PI / 180
 
         x += ds * Math.cos(headingRad)
         y += ds * Math.sin(headingRad)

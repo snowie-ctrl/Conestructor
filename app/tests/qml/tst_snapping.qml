@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import "../../qml/logic/commands.mjs" as Commands
 import "../../qml/logic/elements.mjs" as Elements
 import "../../qml/logic/snapping.mjs" as Snapping
 
@@ -161,5 +162,56 @@ TestCase {
         verify(joinedWell(list[3], "B", list[0], "A"), "d-a")
         verify(joinedWell(list[2], "B", list[3], "A"), "c-d")
         verify(joinedWell(list[1], "B", list[2], "A"), "b-c")
+    }
+
+    // e1 and e2 joined along the screen at y 5 (0 to 40 m); e3 alone, pointing down the screen from (70, 20).
+    function groupTrack() {
+        const s = new Commands.UndoStack()
+        let t = Commands.run(s, Commands.emptyTrack(), "setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 10 })
+        t = Commands.run(s, t, "add", { type: "straight", x: 10, y: 5 })
+        t = Commands.run(s, t, "add", { type: "straight", x: 0, y: 0, snap: { ownEnd: "A", id: "e1", end: "B" } })
+        t = Commands.run(s, t, "add", { type: "straight", x: 70, y: 30, rotation: 90 })
+        return t
+    }
+
+    function shifted(t, ids, dx, dy) {
+        return ids.map(id => {
+            const e = Commands.clone(t).elements.find(x => x.id === id)
+            e.x += dx
+            e.y += dy
+            return e
+        })
+    }
+
+    // Ends meet within 1e-6 m, facing opposite ways (a turned group carries a little rounding).
+    function meetWell(a, aEnd, b, bEnd) {
+        const pa = Elements.endsWorld(a)[aEnd]
+        const pb = Elements.endsWorld(b)[bEnd]
+        const turn = (((pa.heading - pb.heading) % 360) + 360) % 360
+        return Math.hypot(pa.x - pb.x, pa.y - pb.y) < 1e-6 && Math.abs(turn - 180) < 1e-6
+    }
+
+    function test_aGroupSnapsAsOne() {
+        const t = groupTrack()
+        const group = shifted(t, ["e1", "e2"], 25, 5)
+        const s = Snapping.findGroupSnap(t.elements, group, 15)
+        compare(s.ownId, "e2")
+        compare(s.ownEnd, "B")
+        compare(s.targetId, "e3")
+        compare(s.targetEnd, "A")
+        const e3 = t.elements.find(e => e.id === "e3")
+        const placed = Snapping.groupToJoin(group, s.ownId, s.ownEnd, e3, s.targetEnd)
+        const p1 = placed.find(e => e.id === "e1")
+        const p2 = placed.find(e => e.id === "e2")
+        verify(meetWell(p2, "B", e3, "A"), "the open end of the group meets e3")
+        verify(meetWell(p1, "B", p2, "A"), "the join inside the group still meets")
+        compare(Math.round(p2.rotation), 90)
+        compare(group[1].x, t.elements[1].x + 25)     // the group passed in is not changed
+    }
+
+    function test_endsJoinedInsideTheGroupDoNotSnap() {
+        const lone = Commands.clone(groupTrack())
+        lone.elements = lone.elements.filter(e => e.id !== "e3")
+        compare(Snapping.findGroupSnap(lone.elements, shifted(lone, ["e1", "e2"], 1, 1), 15), null)
     }
 }

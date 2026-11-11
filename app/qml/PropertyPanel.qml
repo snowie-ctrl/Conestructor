@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Conestructor
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
+import "logic/selection.mjs" as Selection
 import "logic/units.mjs" as Units
 
 // The settings of whatever is selected. For an element: where it is and which way it points in the export frame
@@ -14,7 +15,17 @@ ScrollView {
     contentWidth: availableWidth
 
     readonly property var el: TrackStore.selectedElement
-    readonly property string kind: el ? "element" : TrackStore.selectedId
+    readonly property var many: TrackStore.selectedElements.length > 1 ? TrackStore.selectedElements : []
+    readonly property string kind: el ? "element" : many.length > 1 ? "many" : TrackStore.selectedId
+    readonly property var shared: Selection.sharedProps(many)
+    // Changes only when the selection or the set of shared settings changes, so fields are not rebuilt while typing.
+    readonly property string sharedKey: many.map(e => e.id).join(",") + ":" + shared.map(s => s.def.key).join(",")
+    property var sharedDefs: []
+    onSharedKeyChanged: sharedDefs = shared.map(s => s.def)
+
+    function sharedEntry(key) {
+        return shared.find(s => s.def.key === key) || null
+    }
     // Changes only when the selection or the set of visible settings changes, so fields are not rebuilt while typing.
     readonly property string fieldsKey: el ? el.id + ":" + Elements.propList(el.type, el.props).map(p => p.key).join(",") : ""
     property var defs: []
@@ -29,6 +40,7 @@ ScrollView {
 
         Label {
             text: panel.kind === "element" ? Elements.NAMES[panel.el.type]
+                  : panel.kind === "many" ? qsTr("%1 elements selected").arg(panel.many.length)
                   : panel.kind === "ruler" ? qsTr("Ruler")
                   : panel.kind === "origin" ? qsTr("Origin target")
                   : panel.kind === "direction" ? qsTr("Direction target")
@@ -51,10 +63,17 @@ ScrollView {
                                                                      .arg(Units.format(panel.framePosition.y, Settings.units)) : ""
             color: "#b0b0b0"
         }
-        Label {
+        // Degrees counter-clockwise from the Origin -> Direction axis. Typing turns the element's whole joined chain.
+        PropField {
             visible: panel.framePosition !== null
-            text: qsTr("Rotation   %1").arg(Units.formatAngle(panel.frameRotation))
-            color: "#b0b0b0"
+            def: ({ key: "rotation", label: qsTr("Rotation"), kind: "angle", min: -360, max: 360 })
+            value: panel.frameRotation
+            stepSize: 1
+            bigStep: 15
+            onEdited: (v) => TrackStore.run("rotateChain", { id: panel.el.id,
+                                                             rotation: Frame.headingFromFrame(TrackStore.frame, v),
+                                                             mergeKey: "rotation:" + panel.el.id })
+            onFinished: TrackStore.seal()
         }
 
         Repeater {
@@ -66,6 +85,24 @@ ScrollView {
                 onEdited: (v) => {
                     const choice = modelData.kind === "choice"   // read first: changing a choice can rebuild this field
                     TrackStore.run("setProp", { id: panel.el.id, key: modelData.key, value: v })
+                    if (choice)
+                        TrackStore.seal()
+                }
+                onFinished: TrackStore.seal()
+            }
+        }
+
+        Repeater {
+            model: panel.sharedDefs
+            PropField {
+                required property var modelData
+                readonly property var entry: panel.sharedEntry(modelData.key)
+                def: modelData
+                mixed: entry !== null && entry.mixed
+                value: entry && !entry.mixed ? entry.value : (modelData.kind === "choice" ? "" : 0)
+                onEdited: (v) => {
+                    const choice = modelData.kind === "choice"   // read first: a choice can rebuild this field
+                    TrackStore.run("setProps", { ids: panel.many.map(e => e.id), key: modelData.key, value: v })
                     if (choice)
                         TrackStore.seal()
                 }

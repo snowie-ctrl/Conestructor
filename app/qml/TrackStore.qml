@@ -1,11 +1,14 @@
 pragma Singleton
 import QtQuick
+import Conestructor
 import "logic/commands.mjs" as Commands
+import "logic/conefile.mjs" as ConeFile
 import "logic/frame.mjs" as Frame
 import "logic/postprocess.mjs" as Post
 
 // The track being edited and every change to it. The track is plain data (see logic/commands.mjs); every edit runs
 // as a command through the undo stack, and the canvas and panels draw from `track`. Nothing drawn keeps a copy.
+// It also knows which file the track came from and whether it has changed since.
 QtObject {
     id: store
 
@@ -14,12 +17,27 @@ QtObject {
     readonly property int elementCount: track.elements.length
     readonly property var frame: Frame.makeFrame(track.targets.origin, track.targets.direction, mpp)
 
-    // "" (nothing), an element id, "ruler", "origin" or "direction".
-    property string selectedId: ""
-    readonly property var selectedElement: {
-        const id = selectedId
-        return track.elements.find(e => e.id === id) || null
+    // The open file ("" until first saved), the track's name, and whether it differs from what was last saved or
+    // opened (undoing back to that state clears it).
+    property string filePath: ""
+    readonly property string name: filePath !== "" ? TrackFile.baseName(filePath) : qsTr("Untitled")
+    readonly property string trackText: JSON.stringify(track)
+    property string savedText: JSON.stringify(Commands.emptyTrack())
+    readonly property bool dirty: trackText !== savedText
+
+    // What is selected: element ids, or one of "ruler", "origin", "direction" on its own.
+    property var selection: []
+    // The one thing selected, or "" when nothing or several are.
+    readonly property string selectedId: selection.length === 1 ? selection[0] : ""
+    readonly property var selectedElements: {
+        const ids = selection
+        return track.elements.filter(e => ids.indexOf(e.id) >= 0)
     }
+    // The one element selected, or null.
+    readonly property var selectedElement: selection.length === 1 && selectedElements.length === 1 ? selectedElements[0] : null
+
+    // Elements driven against the rest of their chain: they show a warning (Reverse direction fixes it).
+    readonly property var backwardIds: Post.backwards(track.elements)
 
     property string message: ""
     property bool previewOn: false
@@ -41,8 +59,9 @@ QtObject {
 
     function setTrack(t) {
         track = t
-        if (selectedId !== "" && !exists(selectedId))
-            selectedId = ""
+        const kept = selection.filter(id => exists(id))
+        if (kept.length !== selection.length)
+            selection = kept
         syncStack()
         if (previewOn)
             refreshPreview()
@@ -84,8 +103,104 @@ QtObject {
         stack.clear()
         previewOn = false
         preview = null
-        selectedId = ""
+        selection = []
         setTrack(t)
+    }
+
+    function markSaved() {
+        savedText = trackText
+    }
+
+    function photoRef() {
+        return track.photo.kind === "image" && track.photo.ref !== null ? track.photo.ref : -1
+    }
+
+    function documentText(trackName) {
+        return ConeFile.documentText(track, { name: trackName, app: "Conestructor " + AppInfo.version,
+                                              saved: ConeFile.timestamp(new Date()) })
+    }
+
+    // A fresh untitled track with no undo history; photos from before are forgotten.
+    function newTrack() {
+        PhotoStore.clear(-1)
+        filePath = ""
+        loadTrack(Commands.emptyTrack())
+        markSaved()
+        problemsCleared()
+    }
+
+    // Writes the track to `path` (a .cone file); false after a banner says why not.
+    function saveTo(path) {
+        const error = TrackFile.save(path, documentText(TrackFile.baseName(path)), photoRef())
+        if (error !== "") {
+            report(error, null)
+            return false
+        }
+        filePath = path
+        markSaved()
+        Settings.addRecentFile(path)
+        TrackFile.deleteBackup()
+        message = qsTr("Saved %1").arg(path)
+        return true
+    }
+
+    // Reads a track file: { track, warning, photoRef }, or null after a banner says why not (this track is untouched).
+    function readTrack(path) {
+        const r = TrackFile.open(path)
+        if (r.error) {
+            if (r.error === "missing")
+                Settings.removeRecentFile(path)
+            report(r.error === "notJson" ? ConeFile.MESSAGES.notTrack : r.message, null)
+            return null
+        }
+        let doc = null
+        try {
+            doc = JSON.parse(r.text)
+        } catch (e) {
+            doc = null
+        }
+        const result = ConeFile.fromDocument(doc, r.photoRef)
+        if (result.error) {
+            if (r.photoRef >= 0)
+                PhotoStore.remove(r.photoRef)
+            report(result.error, null)
+            return null
+        }
+        return { track: result.track, warning: result.warning, photoRef: r.photoRef }
+    }
+
+    // Puts a track read by readTrack in place of this one, with no undo history.
+    function show(read) {
+        PhotoStore.clear(read.photoRef)
+        loadTrack(read.track)
+        if (read.warning !== "")
+            report(read.warning, null)
+        else
+            problemsCleared()
+    }
+
+    function openPath(path) {
+        const read = readTrack(path)
+        if (!read)
+            return false
+        filePath = path
+        show(read)
+        markSaved()
+        Settings.addRecentFile(path)
+        message = qsTr("Opened %1").arg(path)
+        return true
+    }
+
+    // Opens the autosave backup as unsaved changes to the track it came from (`backup` from TrackFile.findBackup).
+    function restoreBackup(backup) {
+        const read = readTrack(backup.path)
+        if (!read)
+            return false
+        filePath = backup.trackPath
+        show(read)
+        savedText = ""          // nothing on disk matches it: it stays unsaved until saved
+        message = qsTr("Restored %1 from the backup made at %2").arg(name).arg(backup.time)
+        return true
     }
 
     // A key shared by every step of one drag, so the drag undoes as one step.
@@ -106,11 +221,31 @@ QtObject {
         return track.elements.find(e => e.id === id) || null
     }
 
+    function isSelected(id) {
+        return selection.indexOf(id) >= 0
+    }
+
+    // Selects `id` alone ("" selects nothing).
     function select(id) {
-        if (selectedId === id)
+        const next = id === "" ? [] : [id]
+        if (JSON.stringify(next) === JSON.stringify(selection))
             return
         stack.seal()
-        selectedId = id
+        selection = next
+    }
+
+    // Adds an element to the selection or takes it out (Ctrl+click). A ruler or target selected before is dropped.
+    function toggle(id) {
+        stack.seal()
+        const elementsOnly = selection.filter(s => element(s) !== null)
+        selection = elementsOnly.indexOf(id) >= 0 ? elementsOnly.filter(s => s !== id) : elementsOnly.concat([id])
+    }
+
+    // Selects these elements, or adds them to the elements already selected.
+    function selectMany(ids, add) {
+        stack.seal()
+        const start = add ? selection.filter(s => element(s) !== null) : []
+        selection = start.concat(ids.filter(id => start.indexOf(id) < 0))
     }
 
     function selectLast() {
@@ -120,9 +255,9 @@ QtObject {
     }
 
     function deleteSelected() {
-        const id = selectedId
-        if (id === "")
+        if (selection.length === 0)
             return
+        const id = selectedId
         if (id === "ruler") {
             if (elementCount > 0) {
                 report(qsTr("Delete the track elements before the ruler: their sizes are measured with it."), null)
@@ -132,17 +267,27 @@ QtObject {
         } else if (id === "origin" || id === "direction") {
             run("setTarget", { which: id, point: null })
         } else {
-            run("remove", { id: id })
+            run("removeMany", { ids: selectedElements.map(e => e.id) })
         }
         stack.seal()
     }
 
+    // Copies every selected element (joins between them kept) and selects the copies.
     function duplicateSelected() {
-        if (!selectedElement)
+        const ids = selectedElements.map(e => e.id)
+        if (ids.length === 0)
             return
-        run("duplicate", { id: selectedElement.id })
+        run("duplicateMany", { ids: ids })
         stack.seal()
-        selectLast()
+        selection = track.elements.slice(track.elements.length - ids.length).map(e => e.id)
+    }
+
+    function reverseSelected() {
+        const ids = selectedElements.map(e => e.id)
+        if (ids.length === 0)
+            return
+        run("reverse", { ids: ids })
+        stack.seal()
     }
 
     function report(text, target) {
