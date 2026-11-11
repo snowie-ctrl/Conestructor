@@ -45,4 +45,34 @@ TestCase {
     function test_directionWithNothingToMeasureCountsWhenPlaced() {
         verify(Setup.status(after([["setTarget", { which: "direction", point: { x: 1, y: 1 } }]])).direction)
     }
+
+    function test_theCurrentStepIsTheFirstNotDone() {
+        compare(Setup.current(Commands.emptyTrack()), "photo")
+        const steps = [["setPhoto", { kind: "blueprint" }]]
+        compare(Setup.current(after(steps)), "ruler")
+        steps.push(["setTarget", { which: "origin", point: { x: 50, y: 50 } }])
+        compare(Setup.current(after(steps)), "ruler", "placing Origin early does not skip the ruler")
+        steps.push(["setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 0 }])
+        compare(Setup.current(after(steps)), "rulerLength")
+        steps.push(["setRuler", { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 10 }])
+        compare(Setup.current(after(steps)), "direction")
+        steps.push(["setTarget", { which: "direction", point: { x: 55, y: 50 } }])
+        compare(Setup.current(after(steps)), "direction", "too close to Origin")
+        steps.push(["setTarget", { which: "direction", point: { x: 150, y: 50 } }])
+        compare(Setup.current(after(steps)), "")
+    }
+
+    function test_everyStepHasACard() {
+        for (const step of ["photo", "ruler", "rulerLength", "origin", "direction"]) {
+            const card = Setup.CARDS[step]
+            verify(card.title.startsWith("Step " + card.number + " of 4: "), step)
+            verify(card.text.length > 20, step)
+        }
+        compare(Setup.CARDS.photo.button, undefined)
+        compare(Setup.CARDS.ruler.button, "Place the ruler")
+        compare(Setup.CARDS.ruler.kind, "ruler")
+        compare(Setup.CARDS.rulerLength.kind, "rulerLength")
+        compare(Setup.CARDS.origin.button, "Place Origin")
+        compare(Setup.CARDS.direction.kind, "direction")
+    }
 }

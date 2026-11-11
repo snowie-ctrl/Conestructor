@@ -44,6 +44,7 @@ qt_add_qml_module(conestructor_core
         qml/PropertyPanel.qml
         qml/PreferencesDialog.qml
         qml/RulerLengthBox.qml
+        qml/CoachCard.qml
         qml/logic/units.mjs
         qml/logic/conerows.mjs
         qml/logic/elements.mjs

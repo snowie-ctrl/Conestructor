@@ -1490,6 +1490,60 @@ private slots:
         QCOMPARE(w.label(), QStringLiteral("Place Origin"));
         QVERIFY(isNull(w.canvas->property("placingPoint")));
     }
+
+    // A new track shows the coach card for the step to do now; its buttons start each step; the matching checklist row
+    // is highlighted; the card goes when setup is done and comes back when a step comes undone. The banner sits below
+    // the card.
+    void theCoachCardWalksThroughSetup()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QQuickItem *card = w.named(QStringLiteral("coachCard"));
+        QVERIFY(card && card->isVisible());
+        auto step = [&]() { return card->property("step").toString(); };
+        auto row = [&](int n) { return w.named(QStringLiteral("setupStep%1").arg(n)); };
+        auto press = [&](const QString &text) {
+            QQuickItem *button = findButton(w.window, text);
+            QVERIFY2(button, qPrintable(text));
+            w.clickItem(button);
+        };
+        QCOMPARE(step(), QStringLiteral("photo"));
+        QVERIFY(row(1)->property("current").toBool());
+        QCOMPARE(w.named(QStringLiteral("setupTitle"))->property("text").toString(), QStringLiteral("Setup: start here"));
+
+        QMetaObject::invokeMethod(w.store, "report", Q_ARG(QVariant, QStringLiteral("A note")), Q_ARG(QVariant, QVariant()));
+        QQuickItem *banner = findBanner(w.window);
+        QVERIFY(banner->y() >= card->y() + card->height());
+
+        press(QStringLiteral("Use the blueprint"));
+        QCOMPARE(step(), QStringLiteral("ruler"));
+        QVERIFY(row(2)->property("current").toBool());
+        QVERIFY(row(3)->opacity() < 1);
+
+        press(QStringLiteral("Place the ruler"));
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("ruler"));
+        w.click({ 300, 500 });
+        w.click({ 500, 500 });
+        QCOMPARE(step(), QStringLiteral("rulerLength"));
+        QTRY_VERIFY(w.named(QStringLiteral("rulerLengthBox"))->isVisible());
+        typeText(w.window, QStringLiteral("20"));             // a bare number is feet in feet and inches
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QCOMPARE(step(), QStringLiteral("origin"));
+
+        press(QStringLiteral("Place Origin"));
+        w.click({ 400, 600 });
+        QCOMPARE(step(), QStringLiteral("direction"));
+        press(QStringLiteral("Place Direction"));
+        w.click({ 900, 600 });
+        QCOMPARE(step(), QString());
+        QVERIFY(!card->isVisible());
+        QCOMPARE(w.named(QStringLiteral("setupTitle"))->property("text").toString(),
+                 QStringLiteral("Setup \u2713 (photo, ruler, targets)"));
+
+        QMetaObject::invokeMethod(w.store, "undo");                  // Direction goes again
+        QVERIFY(card->isVisible());
+        QCOMPARE(step(), QStringLiteral("direction"));
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

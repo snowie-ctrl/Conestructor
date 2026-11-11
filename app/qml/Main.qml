@@ -324,10 +324,20 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            ErrorBanner {
-                id: banner
+            CoachCard {
+                id: coach
+                canvas: canvasView
                 anchors.top: parent.top
                 anchors.topMargin: 12
+                anchors.horizontalCenter: parent.horizontalCenter
+                onLoadPhoto: photoDialog.open()
+                onUseBlueprint: window.useBlueprint()
+            }
+
+            ErrorBanner {
+                id: banner
+                anchors.top: coach.visible ? coach.bottom : parent.top
+                anchors.topMargin: coach.visible ? 8 : 12
                 anchors.horizontalCenter: parent.horizontalCenter
                 onShowMe: (target) => canvasView.showTarget(target)
             }
