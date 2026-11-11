@@ -290,6 +290,27 @@ function line(p) {
              ends: { A: { x: -half, y: 0, heading: 180 }, B: { x: half, y: 0, heading: 0 } }, cones: cones }
 }
 
+// The radius of the circle through three points; Infinity when they lie in a line.
+function circumradius(a, b, c) {
+    const ab = Math.hypot(b.x - a.x, b.y - a.y)
+    const bc = Math.hypot(c.x - b.x, c.y - b.y)
+    const ca = Math.hypot(a.x - c.x, a.y - c.y)
+    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+    if (Math.abs(cross) < 1e-12)
+        return Infinity
+    return ab * bc * ca / (2 * Math.abs(cross))
+}
+
+// The tightest curve along a centreline: the smallest circle through three consecutive points. Repeated points (a
+// lead of no length) are skipped.
+export function tightestRadius(path) {
+    const points = path.filter((p, i) => i === 0 || Math.hypot(p.x - path[i - 1].x, p.y - path[i - 1].y) > 1e-9)
+    let r = Infinity
+    for (let i = 1; i < points.length - 1; i++)
+        r = Math.min(r, circumradius(points[i - 1], points[i], points[i + 1]))
+    return r
+}
+
 const BUILD = { straight: straight, slalom: slalom, chicane: chicane, turn: turn, line: line }
 const cache = new Map()
 
@@ -299,11 +320,43 @@ export function geometry(type, props) {
     let g = cache.get(key)
     if (!g) {
         g = BUILD[type](props)
+        g.tightest = tightestRadius(g.path)
         if (cache.size > 500)
             cache.clear()
         cache.set(key, g)
     }
     return g
+}
+
+// ---- Folding ----
+
+// Whether the element's centreline curves more tightly than half its track width somewhere, so the inside edge of its
+// band crosses over itself and its cones land in strange places. Advice only: it never blocks anything.
+export function folds(el) {
+    if (el.type === "straight" || el.type === "line")
+        return false
+    const half = el.props.trackWidth / 2
+    if (el.type === "turn") {
+        const p = el.props
+        if (!(p.angle > 0))
+            return false
+        const r = p.radiusType === "changing" ? Math.min(p.radius, p.exitRadius) : p.radius
+        return r < half
+    }
+    return geometry(el.type, el.props).tightest < half
+}
+
+// What to change so a folded element stops folding ("" when it does not fold). `formatLength(metres)` writes a length
+// in the display units.
+export function foldAdvice(el, formatLength) {
+    if (!folds(el))
+        return ""
+    if (el.type === "turn")
+        return "Folds in on itself: make the radius at least " + formatLength(el.props.trackWidth / 2)
+               + ", or the track narrower."
+    if (el.type === "chicane")
+        return "Folds in on itself: make the shift length longer or the sideways shift smaller, or the track narrower."
+    return "Folds in on itself: space the cones further apart or make the weave offset smaller, or the track narrower."
 }
 
 // ---- In the world (canvas metres) ----

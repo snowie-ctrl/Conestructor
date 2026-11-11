@@ -1,7 +1,8 @@
 // Post-processing: every cone of the track, in driving order, in the export frame. Ported from the prototype's
 // qml/PostProcessor.qml and qml/elements/ConeUtils.js at 2c79b60: cones per element, duplicates at joins removed.
 // Since part 2, joined chains are walked the way most of their elements point and separate chains are stitched by the
-// nearest start. Tests: tests/qml/tst_postprocess.qml and the port check (tests/qml/tst_portcheck.qml).
+// nearest start. Since part 3, cones on another element's driving surface are left out before duplicates are merged,
+// and line cones (walls) come after the course. Tests: tests/qml/tst_postprocess.qml and the port check (tests/qml/tst_portcheck.qml).
 import * as Elements from "./elements.mjs"
 import * as Frame from "./frame.mjs"
 import { FOOT } from "./units.mjs"
@@ -39,6 +40,42 @@ export function check(track) {
 // Each element's cones in canvas metres, in the element's own order (entry A to exit B), each naming its element.
 export function coneGroups(elements) {
     return elements.map(el => ({ id: el.id, cones: Elements.conesWorld(el).map(c => Object.assign(c, { element: el.id })) }))
+}
+
+// A cone more than this far inside any element's band is on the driving surface and is left out.
+export const ON_TRACK_METRES = 0.15
+
+// The bands of the driven elements (lines have none): centreline in canvas metres, half the track width, and a box
+// around the band for a quick first test.
+function bands(elements) {
+    return elements.filter(e => e.type !== "line").map(e => {
+        const path = Elements.pathWorld(e)
+        const half = e.props.trackWidth / 2
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+        for (const p of path) {
+            x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y)
+            x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y)
+        }
+        return { path: path, half: half, x0: x0 - half, y0: y0 - half, x1: x1 + half, y1: y1 + half }
+    })
+}
+
+function onTrack(cone, band) {
+    if (cone.x < band.x0 || cone.x > band.x1 || cone.y < band.y0 || cone.y > band.y1)
+        return false
+    const limit = band.half - ON_TRACK_METRES
+    for (let i = 1; i < band.path.length; i++)
+        if (Elements.pointSegmentDistance(cone, band.path[i - 1], band.path[i]) < limit)
+            return true
+    return false
+}
+
+// Leaves out every cone (a line's too) on the driving surface of any element, its own or another's: folds, a loop over
+// its own leads, overlaps and crossings. Cones on a band's edge stay. Changes `groups`.
+export function removeOnTrack(groups, elements) {
+    const list = bands(elements)
+    for (const g of groups)
+        g.cones = g.cones.filter(c => !list.some(b => onTrack(c, b)))
 }
 
 // Removes the later of any two cones closer than epsilon (they meet at joins). Changes `groups`.
@@ -216,6 +253,7 @@ export function run(track) {
         return { error: error }
     const frame = Frame.makeFrame(track.targets.origin, track.targets.direction, track.photo.metresPerPixel)
     const groups = coneGroups(track.elements)
+    removeOnTrack(groups, track.elements)
     dedupe(groups, DEDUPE_METRES)
     const course = stitch(buildChains(track.elements, groups))
     const ordered = appendLines(course, track.elements.filter(e => e.type === "line"), groups)

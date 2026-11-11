@@ -339,4 +339,48 @@ TestCase {
         const handle = Elements.rotateHandle(line, 1)
         fuzzyCompare(handle.y, -1.5, 1e-9)               // half a metre of reach plus the 1 m asked for
     }
+
+    function typed(type, props) {
+        return { id: "e1", type: type, x: 0, y: 0, rotation: 0, props: Object.assign(Elements.defaults(type), props || {}),
+                 joins: { A: null, B: null } }
+    }
+
+    function test_tightestRadiusOfACircle() {
+        const points = []
+        for (let i = 0; i <= 12; i++)
+            points.push({ x: 5 * Math.cos(i * Math.PI / 6), y: 5 * Math.sin(i * Math.PI / 6) })
+        fuzzyCompare(Elements.tightestRadius(points), 5, 1e-9)
+        // Repeated points (an empty lead) are skipped; points in a line are no curve at all.
+        compare(Elements.tightestRadius([{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }]), Infinity)
+    }
+
+    function test_noDefaultElementFolds() {
+        for (const type of Elements.TYPES)
+            verify(!Elements.folds(typed(type)), type)
+        verify(!Elements.folds(typed("straight", { trackWidth: 20 })))
+    }
+
+    function test_aTurnFoldsBelowHalfItsWidth() {
+        verify(!Elements.folds(typed("turn", { radius: 2 })), "at half the width it does not fold")
+        verify(Elements.folds(typed("turn", { radius: 1.9 })))
+        verify(Elements.folds(typed("turn", { radiusType: "changing", radius: 6, exitRadius: 1.5 })))
+        verify(!Elements.folds(typed("turn", { radiusType: "constant", radius: 6, exitRadius: 1.5 })), "exit radius unused")
+        verify(!Elements.folds(typed("turn", { radius: 1, angle: 0 })), "no turn, no fold")
+    }
+
+    function test_tightChicanesAndSlalomsFold() {
+        verify(Elements.folds(typed("chicane", { shiftLength: 2, shift: 6 })))
+        verify(Elements.folds(typed("slalom", { coneSpacing: 2, weaveOffset: 3 })))
+    }
+
+    function test_foldAdviceNamesTheFix() {
+        const metres = m => m.toFixed(1) + " m"
+        compare(Elements.foldAdvice(typed("turn", { radius: 1 }), metres),
+                "Folds in on itself: make the radius at least 2.0 m, or the track narrower.")
+        compare(Elements.foldAdvice(typed("chicane", { shiftLength: 2 }), metres),
+                "Folds in on itself: make the shift length longer or the sideways shift smaller, or the track narrower.")
+        compare(Elements.foldAdvice(typed("slalom", { coneSpacing: 2, weaveOffset: 3 }), metres),
+                "Folds in on itself: space the cones further apart or make the weave offset smaller, or the track narrower.")
+        compare(Elements.foldAdvice(typed("turn"), metres), "")
+    }
 }
