@@ -202,3 +202,53 @@ export function turnAbout(elements, ids, pivot, degrees) {
         el.rotation = Elements.normalizeAngle(el.rotation + degrees)
     }
 }
+
+// The nearest pairing, within maxDistance, of an open end of `group` (elements as they would land) with an open end of
+// an element outside it: { ownId, ownEnd, targetId, targetEnd, distance } or null. Ends joined inside the group are not
+// open; an outside end joined to a group member counts as open (the drag unjoins it).
+export function findGroupSnap(elements, group, maxDistance) {
+    const ids = group.map(g => g.id)
+    let best = null
+    let bestDistance = maxDistance
+    for (const g of group) {
+        const own = Elements.endsWorld(g)
+        for (const ownEnd of ["A", "B"]) {
+            const mate = g.joins[ownEnd]
+            if (mate && ids.indexOf(mate.id) >= 0)
+                continue
+            for (const el of elements) {
+                if (ids.indexOf(el.id) >= 0)
+                    continue
+                const ends = Elements.endsWorld(el)
+                for (const targetEnd of ["A", "B"]) {
+                    const theirs = el.joins[targetEnd]
+                    if (theirs && ids.indexOf(theirs.id) < 0)
+                        continue
+                    const d = Math.hypot(own[ownEnd].x - ends[targetEnd].x, own[ownEnd].y - ends[targetEnd].y)
+                    if (d < bestDistance) {
+                        bestDistance = d
+                        best = { ownId: g.id, ownEnd: ownEnd, targetId: el.id, targetEnd: targetEnd, distance: d }
+                    }
+                }
+            }
+        }
+    }
+    return best
+}
+
+// Copies of `group`, turned and shifted as one so that `ownEnd` of member `ownId` meets `target`'s `targetEnd`,
+// facing the opposite way.
+export function groupToJoin(group, ownId, ownEnd, target, targetEnd) {
+    const own = group.find(g => g.id === ownId)
+    const placed = placeToJoin(own, ownEnd, target, targetEnd)
+    const copies = group.map(g => Object.assign({}, g))
+    turnAbout(copies, copies.map(c => c.id), { x: own.x, y: own.y }, Elements.normalizeAngle(placed.rotation - own.rotation))
+    const dx = placed.x - own.x
+    const dy = placed.y - own.y
+    for (const c of copies) {
+        c.x += dx
+        c.y += dy
+    }
+    Object.assign(copies.find(c => c.id === ownId), placed)
+    return copies
+}

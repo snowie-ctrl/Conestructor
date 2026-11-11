@@ -50,6 +50,7 @@ qt_add_qml_module(conestructor_core
         qml/logic/postprocess.mjs
         qml/logic/viewport.mjs
         qml/logic/demo.mjs
+        qml/logic/selection.mjs
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp

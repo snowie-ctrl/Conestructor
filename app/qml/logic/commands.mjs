@@ -144,6 +144,66 @@ const COMMANDS = {
         Snapping.turnAbout(t.elements, Snapping.chainOf(t.elements, el.id), { x: el.x, y: el.y }, turn)
         el.rotation = rotation
         return t
+    },
+    // One setting on several elements, each kept within its own limits; chains stay glued.
+    setProps(t, a) {
+        for (const id of a.ids) {
+            const el = find(t, id)
+            el.props[a.key] = Elements.clampProp(el.type, a.key, a.value).value
+        }
+        for (const id of a.ids)
+            Snapping.settle(t.elements, id)
+        Snapping.unjoinApart(t.elements)
+        return t
+    },
+    removeMany(t, a) {
+        for (const id of a.ids) {
+            find(t, id)
+            Snapping.unjoinAll(t.elements, id)
+        }
+        t.elements = t.elements.filter(e => a.ids.indexOf(e.id) < 0)
+        return t
+    },
+    // Copies 2 m along x and y; joins between the copied elements are copied too.
+    duplicateMany(t, a) {
+        const copyOf = {}
+        for (const id of a.ids) {
+            find(t, id)
+            copyOf[id] = "e" + t.nextId
+            t.nextId += 1
+        }
+        for (const id of a.ids) {
+            const source = find(t, id)
+            const joins = { A: null, B: null }
+            for (const end of ["A", "B"]) {
+                const mate = source.joins[end]
+                if (mate && copyOf[mate.id])
+                    joins[end] = { id: copyOf[mate.id], end: mate.end }
+            }
+            t.elements.push({ id: copyOf[id], type: source.type, x: source.x + 2, y: source.y + 2,
+                              rotation: source.rotation, props: Object.assign({}, source.props), joins: joins })
+        }
+        return t
+    },
+    // A group drag: each element to its new place. Joins inside the group stay; joins to elements outside it break.
+    // `snap` joins one of the group's ends to an outside end (the caller has already brought them together).
+    placeMany(t, a) {
+        const ids = a.moves.map(m => m.id)
+        for (const m of a.moves) {
+            const el = find(t, m.id)
+            for (const end of ["A", "B"])
+                if (el.joins[end] && ids.indexOf(el.joins[end].id) < 0)
+                    Snapping.unjoin(t.elements, el.id, end)
+            el.x = m.x
+            el.y = m.y
+            el.rotation = m.rotation
+        }
+        if (a.snap) {
+            Snapping.join(t.elements, a.snap.ownId, a.snap.ownEnd, a.snap.id, a.snap.end)
+            for (const id of ids)
+                Snapping.joinTouching(t.elements, id)
+        }
+        return t
     }
 }
 
@@ -175,6 +235,15 @@ export function label(track, name, a) {
     case "duplicate": return "Duplicate " + named(a.id)
     case "reverse": return "Reverse " + (a.ids.length === 1 ? named(a.ids[0]) : a.ids.length + " elements")
     case "rotateChain": return "Rotate " + named(a.id)
+    case "setProps": {
+        const el = track.elements.find(e => e.id === a.ids[0])
+        const def = el ? Elements.PROPS[el.type].find(p => p.key === a.key) : null
+        return "Change " + (def ? def.label : a.key) + (a.ids.length > 1 ? " (" + a.ids.length + " elements)" : "")
+    }
+    case "removeMany": return "Delete " + (a.ids.length === 1 ? named(a.ids[0]) : a.ids.length + " elements")
+    case "duplicateMany": return "Duplicate " + (a.ids.length === 1 ? named(a.ids[0]) : a.ids.length + " elements")
+    case "placeMany":
+        return (a.verb || "Move") + " " + (a.moves.length === 1 ? named(a.moves[0].id) : a.moves.length + " elements")
     }
     return name
 }
@@ -182,6 +251,8 @@ export function label(track, name, a) {
 function mergeKeyFor(name, a) {
     if (a.mergeKey)
         return a.mergeKey
+    if (name === "setProps")
+        return "props:" + a.ids.join(",") + ":" + a.key
     return name === "setProp" ? "prop:" + a.id + ":" + a.key : ""
 }
 

@@ -49,7 +49,12 @@ TestCase {
             { tag: "duplicate", name: "duplicate", args: { id: "e1" } },
             { tag: "reverse the turn", name: "reverse", args: { ids: ["e2"] } },
             { tag: "reverse two", name: "reverse", args: { ids: ["e1", "e2"] } },
-            { tag: "type a rotation", name: "rotateChain", args: { id: "e1", rotation: 90 } }
+            { tag: "type a rotation", name: "rotateChain", args: { id: "e1", rotation: 90 } },
+            { tag: "change two widths", name: "setProps", args: { ids: ["e1", "e3"], key: "trackWidth", value: 6 } },
+            { tag: "delete two", name: "removeMany", args: { ids: ["e1", "e3"] } },
+            { tag: "duplicate two", name: "duplicateMany", args: { ids: ["e1", "e2"] } },
+            { tag: "drag two", name: "placeMany",
+              args: { moves: [{ id: "e1", x: 40, y: 40, rotation: 0 }, { id: "e2", x: 60, y: 40, rotation: 0 }], snap: null } }
         ]
     }
 
@@ -374,5 +379,71 @@ TestCase {
     function test_aTypedRotationWraps() {
         const t = Commands.run(new Commands.UndoStack(), base(), "rotateChain", { id: "e1", rotation: 270 })
         compare(byId(t, "e1").rotation, -90)
+    }
+
+    function test_severalElementsChangeTogether() {
+        const stack = new Commands.UndoStack()
+        const t = Commands.run(stack, base(), "setProps", { ids: ["e1", "e2"], key: "trackWidth", value: 50 })
+        compare(byId(t, "e1").props.trackWidth, 20)
+        compare(byId(t, "e2").props.trackWidth, 20)
+        compare(stack.undoLabel(), "Change Track width (2 elements)")
+        stack.seal()
+        const t2 = Commands.run(stack, t, "setProps", { ids: ["e1", "e3"], key: "length", value: 30 })
+        compare(byId(t2, "e3").props.length, 30)
+        compare(allJoinsHold(t2), 4)
+        const one = Commands.run(new Commands.UndoStack(), base(), "setProps", { ids: ["e2"], key: "radius", value: 8 })
+        compare(byId(one, "e2").props.radius, 8)
+    }
+
+    function test_deletingSeveral() {
+        const stack = new Commands.UndoStack()
+        const t = Commands.run(stack, base(), "removeMany", { ids: ["e1", "e3"] })
+        compare(t.elements.length, 1)
+        compare(JSON.stringify(byId(t, "e2").joins), JSON.stringify({ A: null, B: null }))
+        compare(stack.undoLabel(), "Delete 2 elements")
+        Commands.run(stack, base(), "removeMany", { ids: ["e2"] })
+        compare(stack.undoLabel(), "Delete Turn")
+    }
+
+    function test_duplicatingSeveralKeepsTheirJoins() {
+        const stack = new Commands.UndoStack()
+        const t0 = base()
+        const t = Commands.run(stack, t0, "duplicateMany", { ids: ["e1", "e2"] })
+        compare(t.elements.length, 5)
+        compare(JSON.stringify(byId(t, "e4").joins), JSON.stringify({ A: null, B: { id: "e5", end: "A" } }))
+        compare(JSON.stringify(byId(t, "e5").joins), JSON.stringify({ A: { id: "e4", end: "B" }, B: null }))
+        compare(byId(t, "e4").x, byId(t0, "e1").x + 2)
+        compare(byId(t, "e5").y, byId(t0, "e2").y + 2)
+        compare(t.nextId, 6)
+        compare(stack.undoLabel(), "Duplicate 2 elements")
+        compare(allJoinsHold(t), 6)
+    }
+
+    function test_aGroupDragKeepsInnerJoinsAndBreaksOuterOnes() {
+        const t0 = base()
+        const e1 = byId(t0, "e1")
+        const e2 = byId(t0, "e2")
+        const stack = new Commands.UndoStack()
+        const t = Commands.run(stack, t0, "placeMany", {
+            moves: [{ id: "e1", x: e1.x + 30, y: e1.y, rotation: e1.rotation },
+                    { id: "e2", x: e2.x + 30, y: e2.y, rotation: e2.rotation }], snap: null })
+        compare(byId(t, "e1").joins.B.id, "e2")
+        verify(meets(t, "e1", "B", "e2", "A"))
+        compare(byId(t, "e2").joins.B, null)
+        compare(byId(t, "e3").joins.A, null)
+        compare(stack.undoLabel(), "Move 2 elements")
+        compare(JSON.stringify(stack.undo()), JSON.stringify(t0))
+    }
+
+    function test_aGroupDragCanSnap() {
+        const t0 = base()
+        const e3 = byId(t0, "e3")
+        const s = new Commands.UndoStack()
+        let t = Commands.run(s, t0, "placeMany", { moves: [{ id: "e3", x: e3.x + 50, y: e3.y, rotation: e3.rotation }], snap: null })
+        compare(byId(t, "e3").joins.A, null)
+        t = Commands.run(s, t, "placeMany", { moves: [{ id: "e3", x: e3.x, y: e3.y, rotation: e3.rotation }],
+                                              snap: { ownId: "e3", ownEnd: "A", id: "e2", end: "B" } })
+        compare(byId(t, "e3").joins.A.id, "e2")
+        compare(byId(t, "e2").joins.B.id, "e3")
     }
 }
