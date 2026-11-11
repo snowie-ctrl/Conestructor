@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conestructor track (.cone), version 1",
+  "description": "One autocross track: its targets and cones in metres in the export frame, Conestructor's own editable design, and the lot photo. See docs/cone-format.md. Readers ignore fields they do not know.",
+  "type": "object",
+  "required": ["format", "version", "name", "app", "saved", "units", "axes", "targets", "cones", "design", "photo"],
+  "properties": {
+    "format": { "const": "conestructor-track" },
+    "version": { "type": "integer", "minimum": 1, "description": "1 for this structure; changes only when the structure changes." },
+    "name": { "type": "string", "description": "The track's name (the file name when saved)." },
+    "app": { "type": "string", "description": "The app and version that saved it." },
+    "saved": { "type": "string", "format": "date-time", "description": "When it was saved, ISO 8601 UTC." },
+    "units": { "const": "m" },
+    "axes": { "type": "string", "description": "x toward Direction target, y to the left, heading degrees counter-clockwise from +x" },
+    "targets": {
+      "type": "object",
+      "required": ["origin", "direction", "distance"],
+      "properties": {
+        "origin": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/point" }], "description": "Always 0, 0 once placed." },
+        "direction": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/point" }], "description": "On +x; null until Origin, Direction and the ruler's real length are set." },
+        "distance": { "type": ["number", "null"], "minimum": 0, "description": "Metres from Origin to Direction." }
+      }
+    },
+    "cones": { "type": "array", "items": { "$ref": "#/$defs/cone" }, "description": "Every cone in driving order; empty when the track cannot be processed yet." },
+    "design": { "type": "object", "description": "Conestructor's own editable track. It may change between app versions: read cones instead." },
+    "photo": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/photo" }] }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "cone": {
+      "type": "object",
+      "required": ["index", "type", "x", "y", "heading", "element"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "type": { "enum": ["standing", "leaning"] },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "heading": { "type": "number", "description": "Degrees counter-clockwise from +x: where a leaning cone points; 0 for standing cones." },
+        "element": { "type": ["string", "null"], "description": "The element that made it; null for a cone added by hand." },
+        "edited": { "type": "boolean", "description": "Optional: true when someone changed this cone by hand." }
+      }
+    },
+    "photo": {
+      "type": "object",
+      "required": ["mediaType", "width", "height", "data"],
+      "properties": {
+        "mediaType": { "enum": ["image/png", "image/jpeg"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "data": { "type": "string", "contentEncoding": "base64", "description": "The original file's bytes." }
+      }
+    }
+  }
+}
