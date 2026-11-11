@@ -312,4 +312,31 @@ TestCase {
         fuzzyCompare(after.B.x, before.A.x, 1e-6)
         fuzzyCompare(after.B.y, before.A.y, 1e-6)
     }
+
+    function test_aLineIsARowOfStandingCones() {
+        compare(JSON.stringify(Elements.defaults("line")), JSON.stringify({ length: 20, spacing: 3 }))
+        compare(Elements.NAMES.line, "Line")
+        compare(Elements.TIPS.line, "Line: a straight row of cones, for walls and boundaries.")
+        const g = Elements.geometry("line", Elements.defaults("line"))
+        compare(g.cones.length, 8)                       // 20 m at most 3 m apart: 7 gaps of 2.857 m
+        fuzzyCompare(g.cones[0].x, -10, 1e-9)
+        fuzzyCompare(g.cones[7].x, 10, 1e-9)
+        fuzzyCompare(g.cones[1].x - g.cones[0].x, 20 / 7, 1e-9)
+        verify(g.cones.every(c => c.type === "standing" && c.y === 0 && c.heading === 0))
+        compare(Elements.geometry("line", { length: 21, spacing: 3 }).cones.length, 8)   // exactly 3 m apart
+        fuzzyCompare(g.ends.A.x, -10, 1e-9)
+        compare(g.ends.A.heading, 180)
+        compare(g.ends.B.heading, 0)
+    }
+
+    function test_aLineIsPickedWithinHalfAMetre() {
+        const line = { id: "e1", type: "line", x: 0, y: 0, rotation: 0, props: Elements.defaults("line"),
+                       joins: { A: null, B: null } }
+        compare(Elements.hitTest([line], { x: 3, y: 0.4 }, 0), "e1")
+        compare(Elements.hitTest([line], { x: 3, y: 0.6 }, 0), "")
+        compare(Elements.reach(line), 0.5)
+        compare(Elements.reach({ type: "straight", props: { trackWidth: 4 } }), 2)
+        const handle = Elements.rotateHandle(line, 1)
+        fuzzyCompare(handle.y, -1.5, 1e-9)               // half a metre of reach plus the 1 m asked for
+    }
 }

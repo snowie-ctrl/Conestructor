@@ -6,14 +6,15 @@
 import * as Rows from "./conerows.mjs"
 import { FOOT } from "./units.mjs"
 
-export const TYPES = ["straight", "slalom", "chicane", "turn"]
-export const NAMES = { straight: "Straight", slalom: "Slalom", chicane: "Chicane", turn: "Turn" }
-export const COLOURS = { straight: "#b603fc", slalom: "#c9691a", chicane: "#1a46c9", turn: "#34eb7a" }
+export const TYPES = ["straight", "slalom", "chicane", "turn", "line"]
+export const NAMES = { straight: "Straight", slalom: "Slalom", chicane: "Chicane", turn: "Turn", line: "Line" }
+export const COLOURS = { straight: "#b603fc", slalom: "#c9691a", chicane: "#1a46c9", turn: "#34eb7a", line: "#c8c8c8" }
 export const TIPS = {
     straight: "Straight: a run between two rows of cones.",
     slalom: "Slalom: a line of cones to weave through.",
     chicane: "Chicane: a sideways step in the track.",
-    turn: "Turn: anything from a sweeper to a hairpin."
+    turn: "Turn: anything from a sweeper to a hairpin.",
+    line: "Line: a straight row of cones, for walls and boundaries."
 }
 
 const WIDTH = { key: "trackWidth", label: "Track width", kind: "length", min: 1, max: 20 }
@@ -52,6 +53,11 @@ export const PROPS = {
           showWhen: { key: "radiusType", value: "changing" } },
         Object.assign({ key: "direction", label: "Direction" }, SIDES),
         WIDTH
+    ],
+    // A line is not driven: no track width, no leads. Its spacing is its own setting, never shared with a slalom's.
+    line: [
+        { key: "length", label: "Length", kind: "length", min: 1, max: 200 },
+        { key: "spacing", label: "Cone spacing", kind: "length", min: 0.5, max: 50 }
     ]
 }
 
@@ -60,7 +66,8 @@ const DEFAULTS = {
     slalom: { leadIn: 6, leadOut: 6, coneCount: 4, coneSpacing: 10, weaveOffset: 1.5, firstTurn: "left", trackWidth: 4 },
     chicane: { leadIn: 6, leadOut: 6, shiftLength: 12, shift: 6, direction: "left", trackWidth: 4 },
     turn: { leadIn: 6, leadOut: 6, angle: 180, radius: 6, radiusType: "constant", exitRadius: 10, direction: "right",
-            trackWidth: 4 }
+            trackWidth: 4 },
+    line: { length: 20, spacing: 3 }
 }
 
 export function defaults(type) {
@@ -272,7 +279,18 @@ function turn(p) {
     }
 }
 
-const BUILD = { straight: straight, slalom: slalom, chicane: chicane, turn: turn }
+// A straight row of standing cones, evenly spread at most `spacing` apart, both ends included.
+function line(p) {
+    const half = p.length / 2
+    const gaps = Math.max(1, Math.ceil(p.length / p.spacing - 1e-9))
+    const cones = []
+    for (let i = 0; i <= gaps; i++)
+        cones.push({ x: -half + p.length * i / gaps, y: 0, heading: 0, type: "standing" })
+    return { path: [{ x: -half, y: 0 }, { x: half, y: 0 }],
+             ends: { A: { x: -half, y: 0, heading: 180 }, B: { x: half, y: 0, heading: 0 } }, cones: cones }
+}
+
+const BUILD = { straight: straight, slalom: slalom, chicane: chicane, turn: turn, line: line }
 const cache = new Map()
 
 // The element's centreline, ends and cones in its own frame. Cached by settings; callers must not change the result.
@@ -326,6 +344,14 @@ export function pointSegmentDistance(p, a, b) {
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
+// How far from its centreline an element can be picked: half its track width, or half a metre for a line (which has
+// no band).
+export const LINE_REACH = 0.5
+
+export function reach(el) {
+    return el.type === "line" ? LINE_REACH : el.props.trackWidth / 2
+}
+
 export function distanceToPath(el, p) {
     const path = pathWorld(el)
     let best = Infinity
@@ -338,7 +364,7 @@ export function distanceToPath(el, p) {
 export function hitTest(elements, p, tolerance) {
     for (let i = elements.length - 1; i >= 0; i--) {
         const el = elements[i]
-        if (distanceToPath(el, p) <= el.props.trackWidth / 2 + tolerance)
+        if (distanceToPath(el, p) <= reach(el) + tolerance)
             return el.id
     }
     return ""
@@ -347,10 +373,10 @@ export function hitTest(elements, p, tolerance) {
 // Where the rotate handle sits: above the band (up the element's own y), `extraMetres` clear of it.
 export function rotateHandle(el, extraMetres) {
     const g = geometry(el.type, el.props)
-    let reach = 0
+    let span = 0
     for (const p of g.path)
-        reach = Math.max(reach, Math.abs(p.y))
-    return toWorld(el, { x: 0, y: -(reach + el.props.trackWidth / 2 + extraMetres) })
+        span = Math.max(span, Math.abs(p.y))
+    return toWorld(el, { x: 0, y: -(span + reach(el) + extraMetres) })
 }
 
 // The band (as wide as the track) around a centreline, as one closed outline: one side forward, the other back.

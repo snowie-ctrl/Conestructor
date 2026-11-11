@@ -54,4 +54,15 @@ TestCase {
         compare(Selection.boxHits(list, { x: 8, y: -1 }, { x: 12, y: 1 }).length, 0)
         compare(Selection.boxHits(list, { x: 25, y: 4 }, { x: 30, y: 6 }).length, 0)
     }
+
+    function test_aLineAndAStraightShareOnlyTheLength() {
+        compare(keys(Selection.sharedProps([el("e1", "straight"), el("e2", "line")])), "length")
+        compare(keys(Selection.sharedProps([el("e1", "turn"), el("e2", "line")])), "")
+    }
+
+    function test_theBoxPicksALineWithinHalfAMetre() {
+        const line = el("e1", "line")
+        compare(JSON.stringify(Selection.boxHits([line], { x: -1, y: 0.4 }, { x: 1, y: 1 })), JSON.stringify(["e1"]))
+        compare(JSON.stringify(Selection.boxHits([line], { x: -1, y: 0.6 }, { x: 1, y: 1 })), "[]")
+    }
 }

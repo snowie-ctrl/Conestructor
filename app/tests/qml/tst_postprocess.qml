@@ -162,4 +162,31 @@ TestCase {
         compare(r.cones[3].element, "e1")
         compare(r.canvasCones[3].element, "e1")
     }
+
+    function test_lineConesComeAfterTheCourseNearestFirst() {
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "straight", x: 10, y: 5 }],                                          // course: x 0 to 20
+            ["add", { type: "line", x: 60, y: 20, props: { length: 10, spacing: 5 } }],          // far wall: x 55 to 65
+            ["add", { type: "line", x: 30, y: 5, rotation: 180, props: { length: 10, spacing: 5 } }]  // near: A x 35, B x 25
+        ]))
+        const cones = Post.run(t).canvasCones
+        compare(cones.length, 12)
+        verify(cones.slice(0, 6).every(c => c.element === "e1"), "the course first")
+        // The near wall next, from its end nearer the course's last cone (x 25 is nearer x 20 than x 35 is).
+        compare(cones[6].element, "e3")
+        fuzzyCompare(cones[6].x, 25, 1e-9)
+        fuzzyCompare(cones[8].x, 35, 1e-9)
+        // Then the far wall, from its end nearer x 35.
+        compare(cones[9].element, "e2")
+        fuzzyCompare(cones[9].x, 55, 1e-9)
+    }
+
+    function test_linesAloneStillProcess() {
+        const t = build(scale().concat(targets(), [["add", { type: "line", x: 10, y: 5 }]]))
+        const r = Post.run(t)
+        verify(!r.error, r.error ? r.error.message : "")
+        compare(r.cones.length, 8)
+        compare(JSON.stringify(Post.backwards(t.elements)), "[]")
+        compare(JSON.stringify(Post.chains(t.elements)), "[]")
+    }
 }

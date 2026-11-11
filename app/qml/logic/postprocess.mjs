@@ -112,14 +112,14 @@ export function chains(elements) {
     const visited = []
     const out = []
     for (const el of elements) {
-        if (visited.indexOf(el.id) >= 0 || (el.joins.A !== null && el.joins.B !== null))
+        if (el.type === "line" || visited.indexOf(el.id) >= 0 || (el.joins.A !== null && el.joins.B !== null))
             continue
         const steps = walkSteps(elements, el, el.joins.A === null ? "A" : "B")
         steps.forEach(s => visited.push(s.id))
         out.push(oriented(elements, steps, false))
     }
     for (const el of elements) {
-        if (visited.indexOf(el.id) >= 0)
+        if (el.type === "line" || visited.indexOf(el.id) >= 0)
             continue
         const steps = walkSteps(elements, el, "A")
         steps.forEach(s => visited.push(s.id))
@@ -178,6 +178,38 @@ export function stitch(chains) {
     return ordered
 }
 
+// Line cones (walls and boundaries) after the course: one line at a time, the nearest first, each from whichever of
+// its ends is nearer the last cone so far.
+export function appendLines(ordered, lines, groups) {
+    const rows = lines.map(l => groups.find(g => g.id === l.id).cones).filter(r => r.length > 0)
+    let out = ordered.slice()
+    while (rows.length > 0) {
+        const last = out.length > 0 ? out[out.length - 1] : null
+        let best = 0
+        let flip = false
+        if (last) {
+            let bestDistance = Infinity
+            rows.forEach((r, i) => {
+                const toStart = distance(last, r[0])
+                const toEnd = distance(last, r[r.length - 1])
+                if (toStart < bestDistance) {
+                    bestDistance = toStart
+                    best = i
+                    flip = false
+                }
+                if (toEnd < bestDistance) {
+                    bestDistance = toEnd
+                    best = i
+                    flip = true
+                }
+            })
+        }
+        const row = rows.splice(best, 1)[0]
+        out = out.concat(flip ? row.slice().reverse() : row)
+    }
+    return out
+}
+
 export function run(track) {
     const error = check(track)
     if (error)
@@ -185,7 +217,8 @@ export function run(track) {
     const frame = Frame.makeFrame(track.targets.origin, track.targets.direction, track.photo.metresPerPixel)
     const groups = coneGroups(track.elements)
     dedupe(groups, DEDUPE_METRES)
-    const ordered = stitch(buildChains(track.elements, groups))
+    const course = stitch(buildChains(track.elements, groups))
+    const ordered = appendLines(course, track.elements.filter(e => e.type === "line"), groups)
     const cones = []
     const canvasCones = []
     ordered.forEach((c, index) => {

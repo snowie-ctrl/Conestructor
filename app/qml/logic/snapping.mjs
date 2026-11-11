@@ -2,6 +2,7 @@
 // qml/elements/Element.qml (snapToGate, propagateFromSelf, cascadeGate, chainLength, createMate, breakMate) and
 // CanvasArea.findNearestGate at 2c79b60. Elements are plain data (see commands.mjs). Every function here except
 // findSnap, placeToJoin and otherEnd changes the element objects in the array it is given, so callers pass a copy.
+// Lines (walls and boundaries) are never joined: nothing snaps to them and they snap to nothing.
 import * as Elements from "./elements.mjs"
 
 export function otherEnd(end) {
@@ -16,11 +17,13 @@ function byId(elements, id) {
 // { targetId, targetEnd, ownEnd, distance }, or null. An end joined to `moving` itself counts as open, so an
 // element being dragged can stay where it snapped.
 export function findSnap(elements, moving, maxDistance) {
+    if (moving.type === "line")
+        return null
     const own = Elements.endsWorld(moving)
     let best = null
     let bestDistance = maxDistance
     for (const el of elements) {
-        if (el.id === moving.id)
+        if (el.id === moving.id || el.type === "line")
             continue
         const ends = Elements.endsWorld(el)
         for (const targetEnd of ["A", "B"]) {
@@ -138,12 +141,14 @@ function facesAway(a, b) {
 // After a snap this restores the far side too: an element dropped back into its gap joins both neighbours.
 export function joinTouching(elements, id) {
     const self = byId(elements, id)
+    if (self.type === "line")
+        return
     for (const ownEnd of ["A", "B"]) {
         if (self.joins[ownEnd])
             continue
         const own = Elements.endsWorld(self)[ownEnd]
         for (const el of elements) {
-            if (el.id === id || self.joins[ownEnd])
+            if (el.id === id || el.type === "line" || self.joins[ownEnd])
                 continue
             const ends = Elements.endsWorld(el)
             for (const end of ["A", "B"]) {
@@ -211,13 +216,15 @@ export function findGroupSnap(elements, group, maxDistance) {
     let best = null
     let bestDistance = maxDistance
     for (const g of group) {
+        if (g.type === "line")
+            continue
         const own = Elements.endsWorld(g)
         for (const ownEnd of ["A", "B"]) {
             const mate = g.joins[ownEnd]
             if (mate && ids.indexOf(mate.id) >= 0)
                 continue
             for (const el of elements) {
-                if (ids.indexOf(el.id) >= 0)
+                if (ids.indexOf(el.id) >= 0 || el.type === "line")
                     continue
                 const ends = Elements.endsWorld(el)
                 for (const targetEnd of ["A", "B"]) {
