@@ -9,8 +9,11 @@ build/
 .qtc_clangd/
 
 # Satellite map screenshots of local practice lots (not ours to republish)
-Conestructor/assets/images/duckPondBirdeye.png
-Conestructor/assets/images/riverwindBirdeye.png
+app/assets/images/duckPondBirdeye.png
+app/assets/images/riverwindBirdeye.png
+
+# The team server's address and keys (part 4)
+app/config/secrets.json
 
 # OS / editor noise
 .DS_Store
