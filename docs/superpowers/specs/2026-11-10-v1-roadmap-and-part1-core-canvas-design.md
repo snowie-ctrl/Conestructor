@@ -49,7 +49,13 @@ Each part gets its own spec, plan and build, in its own session, on its own bran
    From the owner's part 1 check: turns from 0° to 360° (one element for a full circle, so a skidpad figure 8 is
    two turns); a line tool for straight rows of cones (boundaries and walls); after Place cones, deleting single cones
    and changing a cone's type and pointing direction, which re-processing replaces; the cone count shown as n/m
-   against the cones the team owns (Preferences), red when over.
+   against the cones the team owns (Preferences), red when over. Deferred from part 2's final review: a hand-edited
+   `.cone` with a self-join, an element id of `ruler`/`origin`/`direction`, or joined ends far apart should be refused
+   or repaired on open; after "Don't save" and a cancelled or refused Open, the still-unsaved track should be backed
+   up again; a relative path on the command line should be stored as absolute; the direction arrows should not be
+   rebuilt on every edit (drag performance on 30–40 element courses); a long track name should wrap in the
+   unsaved-changes question; Save As should start in the open track's folder with its name; a backup that cannot be
+   read should not be offered again at every start.
 4. **Team server.** `server/` in the repo (moved from `coneRoutes.py`): multi-team tables, team keys, HTTP upload of a
    `.cone` file with a small thumbnail, a team track list and download; nginx for the subdomain passing only
    `/api/cone/`; a LAN-only admin prefix for deleting tracks and adding team keys; Preferences › Team (team code);
