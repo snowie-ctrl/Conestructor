@@ -1,11 +1,14 @@
 pragma Singleton
 import QtQuick
+import Conestructor
 import "logic/commands.mjs" as Commands
+import "logic/conefile.mjs" as ConeFile
 import "logic/frame.mjs" as Frame
 import "logic/postprocess.mjs" as Post
 
 // The track being edited and every change to it. The track is plain data (see logic/commands.mjs); every edit runs
 // as a command through the undo stack, and the canvas and panels draw from `track`. Nothing drawn keeps a copy.
+// It also knows which file the track came from and whether it has changed since.
 QtObject {
     id: store
 
@@ -13,6 +16,14 @@ QtObject {
     readonly property real mpp: track.photo.metresPerPixel
     readonly property int elementCount: track.elements.length
     readonly property var frame: Frame.makeFrame(track.targets.origin, track.targets.direction, mpp)
+
+    // The open file ("" until first saved), the track's name, and whether it differs from what was last saved or
+    // opened (undoing back to that state clears it).
+    property string filePath: ""
+    readonly property string name: filePath !== "" ? TrackFile.baseName(filePath) : qsTr("Untitled")
+    readonly property string trackText: JSON.stringify(track)
+    property string savedText: JSON.stringify(Commands.emptyTrack())
+    readonly property bool dirty: trackText !== savedText
 
     // "" (nothing), an element id, "ruler", "origin" or "direction".
     property string selectedId: ""
@@ -86,6 +97,90 @@ QtObject {
         preview = null
         selectedId = ""
         setTrack(t)
+    }
+
+    function markSaved() {
+        savedText = trackText
+    }
+
+    function photoRef() {
+        return track.photo.kind === "image" && track.photo.ref !== null ? track.photo.ref : -1
+    }
+
+    function documentText(trackName) {
+        return ConeFile.documentText(track, { name: trackName, app: "Conestructor " + AppInfo.version,
+                                              saved: ConeFile.timestamp(new Date()) })
+    }
+
+    // A fresh untitled track with no undo history; photos from before are forgotten.
+    function newTrack() {
+        PhotoStore.clear(-1)
+        filePath = ""
+        loadTrack(Commands.emptyTrack())
+        markSaved()
+        problemsCleared()
+    }
+
+    // Writes the track to `path` (a .cone file); false after a banner says why not.
+    function saveTo(path) {
+        const error = TrackFile.save(path, documentText(TrackFile.baseName(path)), photoRef())
+        if (error !== "") {
+            report(error, null)
+            return false
+        }
+        filePath = path
+        markSaved()
+        Settings.addRecentFile(path)
+        TrackFile.deleteBackup()
+        message = qsTr("Saved %1").arg(path)
+        return true
+    }
+
+    // Reads a track file: { track, warning, photoRef }, or null after a banner says why not (this track is untouched).
+    function readTrack(path) {
+        const r = TrackFile.open(path)
+        if (r.error) {
+            if (r.error === "missing")
+                Settings.removeRecentFile(path)
+            report(r.error === "notJson" ? ConeFile.MESSAGES.notTrack : r.message, null)
+            return null
+        }
+        let doc = null
+        try {
+            doc = JSON.parse(r.text)
+        } catch (e) {
+            doc = null
+        }
+        const result = ConeFile.fromDocument(doc, r.photoRef)
+        if (result.error) {
+            if (r.photoRef >= 0)
+                PhotoStore.remove(r.photoRef)
+            report(result.error, null)
+            return null
+        }
+        return { track: result.track, warning: result.warning, photoRef: r.photoRef }
+    }
+
+    // Puts a track read by readTrack in place of this one, with no undo history.
+    function show(read) {
+        PhotoStore.clear(read.photoRef)
+        loadTrack(read.track)
+        if (read.warning !== "")
+            report(read.warning, null)
+        else
+            problemsCleared()
+    }
+
+    function openPath(path) {
+        const read = readTrack(path)
+        if (!read)
+            return false
+        filePath = path
+        show(read)
+        markSaved()
+        Settings.addRecentFile(path)
+        message = qsTr("Opened %1").arg(path)
+        return true
     }
 
     // A key shared by every step of one drag, so the drag undoes as one step.

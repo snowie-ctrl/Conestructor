@@ -11,7 +11,7 @@ ApplicationWindow {
     width: 1600
     height: 960
     visible: true
-    title: "Conestructor " + AppInfo.shortVersion + " — Untitled"
+    title: "Conestructor " + AppInfo.shortVersion + " — " + TrackStore.name + (TrackStore.dirty ? "*" : "")
     color: "#1f1f1f"
 
     palette.window: "#262626"
@@ -25,12 +25,78 @@ ApplicationWindow {
     palette.toolTipBase: "#333333"
     palette.toolTipText: "#f0f0f0"
 
-    function newTrack() {
-        TrackStore.run("newTrack")
-        TrackStore.seal()
-        TrackStore.clearPreview()
+    // What waits on the unsaved-changes question: it runs once the track is saved or let go.
+    property var pendingAction: null
+    // Set once the person has answered for the track, so closing does not ask twice.
+    property bool closing: false
+
+    function fitSoon() {
         canvasView.fitPending = true
         canvasView.tryFit()
+    }
+
+    // Runs `action` now when nothing is unsaved; otherwise asks first (Save, Don't save, Cancel).
+    function whenSaved(action) {
+        if (!TrackStore.dirty) {
+            action()
+            return
+        }
+        pendingAction = action
+        unsavedDialog.open()
+    }
+
+    function takePending() {
+        const action = pendingAction
+        pendingAction = null
+        return action || function() {}
+    }
+
+    // Saves to the open file, or asks where first; `then` runs once it is saved.
+    function save(then) {
+        if (TrackStore.filePath === "") {
+            saveAs(then)
+            return
+        }
+        if (TrackStore.saveTo(TrackStore.filePath) && then)
+            then()
+    }
+
+    function saveAs(then) {
+        saveDialog.afterSave = then || null
+        saveDialog.open()
+    }
+
+    function newTrack() {
+        whenSaved(() => {
+            TrackStore.newTrack()
+            window.fitSoon()
+        })
+    }
+
+    function openTrack(path) {
+        if (TrackStore.openPath(path))
+            fitSoon()
+    }
+
+    function chooseTrack() {
+        whenSaved(() => openDialog.open())
+    }
+
+    function openRecent(path) {
+        whenSaved(() => window.openTrack(path))
+    }
+
+    onClosing: (close) => {
+        if (closing || !TrackStore.dirty) {
+            TrackFile.deleteBackup()
+            return
+        }
+        close.accepted = false
+        whenSaved(() => {
+            window.closing = true
+            TrackFile.deleteBackup()
+            window.close()
+        })
     }
 
     // Loads a lot photo (a file dialog's URL, a path or a qrc: URL) as one undo step; a banner if it can't be read.
@@ -53,11 +119,12 @@ ApplicationWindow {
         return ({ duckPondBirdeye: qsTr("Duck pond"), riverwindBirdeye: qsTr("Riverwind") })[name] || name
     }
 
-    // For screenshots (CONESTRUCTOR_DEMO) and the smoke test.
+    // For screenshots (CONESTRUCTOR_DEMO) and the tests: the example track, counted as saved.
     function loadDemo(withCones) {
+        TrackStore.newTrack()
         TrackStore.loadTrack(Demo.demoTrack())
-        canvasView.fitPending = true
-        canvasView.tryFit()
+        TrackStore.markSaved()
+        fitSoon()
         if (withCones)
             TrackStore.placeCones()
     }
@@ -71,9 +138,30 @@ ApplicationWindow {
             id: fileMenu
             title: qsTr("&File")
             Action { text: qsTr("&New"); shortcut: StandardKey.New; onTriggered: window.newTrack() }
+            Action { text: qsTr("&Open…"); shortcut: StandardKey.Open; onTriggered: window.chooseTrack() }
+            Menu {
+                id: recentMenu
+                title: qsTr("Open &Recent")
+                enabled: Settings.recentFiles.length > 0
+                Instantiator {
+                    model: Settings.recentFiles
+                    delegate: MenuItem {
+                        required property string modelData
+                        text: modelData
+                        onTriggered: window.openRecent(modelData)
+                    }
+                    onObjectAdded: (index, object) => recentMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => recentMenu.removeItem(object)
+                }
+                MenuSeparator {}
+                MenuItem { text: qsTr("Clear list"); onTriggered: Settings.clearRecentFiles() }
+            }
+            Action { text: qsTr("&Save"); shortcut: StandardKey.Save; onTriggered: window.save(null) }
+            Action { text: qsTr("Save &As…"); shortcut: "Ctrl+Shift+S"; onTriggered: window.saveAs(null) }
+            MenuSeparator {}
             Action { text: qsTr("Load lot photo…"); onTriggered: photoDialog.open() }
             MenuSeparator {}
-            Action { text: qsTr("&Quit"); shortcut: StandardKey.Quit; onTriggered: Qt.quit() }
+            Action { text: qsTr("&Quit"); shortcut: StandardKey.Quit; onTriggered: window.close() }
         }
         Menu {
             id: editMenu
@@ -216,6 +304,52 @@ ApplicationWindow {
         title: qsTr("Load lot photo")
         nameFilters: [qsTr("Photos (*.png *.jpg *.jpeg)")]
         onAccepted: window.loadPhoto(selectedFile)
+    }
+
+    FileDialog {
+        id: openDialog
+        title: qsTr("Open track")
+        nameFilters: [qsTr("Conestructor tracks (*.cone)")]
+        onAccepted: window.openTrack(TrackFile.toLocalPath(selectedFile))
+    }
+
+    FileDialog {
+        id: saveDialog
+        property var afterSave: null      // runs once saved ("result" is the dialog's own)
+        title: qsTr("Save track")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("Conestructor tracks (*.cone)")]
+        defaultSuffix: "cone"
+        onAccepted: {
+            const then = afterSave
+            afterSave = null
+            if (TrackStore.saveTo(TrackFile.toLocalPath(selectedFile)) && then)
+                then()
+        }
+        onRejected: afterSave = null
+    }
+
+    Dialog {
+        id: unsavedDialog
+        objectName: "unsavedDialog"
+        implicitWidth: 420      // fixed: Fusion's Dialog sizing loops with a custom button box
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qsTr("Unsaved changes")
+        Label { text: qsTr("Save changes to %1?").arg(TrackStore.name) }
+        footer: DialogButtonBox {
+            Button { text: qsTr("Save"); DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
+            Button { text: qsTr("Don't save"); DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole }
+            Button { text: qsTr("Cancel"); DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+        }
+        onAccepted: window.save(window.takePending())
+        onDiscarded: {
+            const action = window.takePending()
+            unsavedDialog.close()
+            TrackFile.deleteBackup()
+            action()
+        }
+        onRejected: window.pendingAction = null
     }
 
     PreferencesDialog { id: preferences }

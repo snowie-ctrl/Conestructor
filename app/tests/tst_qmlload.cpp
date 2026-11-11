@@ -1,4 +1,5 @@
 #include <QQmlApplicationEngine>
+#include <QDir>
 #include <QFile>
 #include <QImage>
 #include <QJSValue>
@@ -432,7 +433,7 @@ private slots:
         QCOMPARE(cones().size(), 0);
 
         // A new track has no ruler; a ruler without a length gets "Show me", which selects it.
-        QMetaObject::invokeMethod(window, "newTrack");
+        QMetaObject::invokeMethod(store, "newTrack");
         QMetaObject::invokeMethod(store, "placeCones");
         QVERIFY(banner()->isVisible());
         QCOMPARE(banner()->property("text").toString(),
@@ -529,6 +530,135 @@ private slots:
         QCOMPARE(kind(), QStringLiteral("none"));
         QCOMPARE(photo->property("source").toString(),
                  QStringLiteral("qrc:/qt/qml/Conestructor/assets/images/blueprintBackground.png"));
+    }
+    // Save writes a .cone the title and Open Recent know about; Open brings it back exactly, with its photo and no
+    // undo history; a file that is not a track, or has gone, leaves the open track alone.
+    void savingAndOpeningATrack()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QObject *settings = engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto *photo = window->findChild<QQuickItem *>(QStringLiteral("photo"));
+        QVERIFY(store && settings && photo);
+        const QString dash = QStringLiteral("Conestructor 0.3 \u2014 ");
+
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QCOMPARE(window->title(), dash + QStringLiteral("Untitled"));
+
+        // An edit marks it unsaved; undoing back to the saved state clears the mark.
+        QVariantMap move{ { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, move));
+        QCOMPARE(window->title(), dash + QStringLiteral("Untitled*"));
+        QMetaObject::invokeMethod(store, "undo");
+        QCOMPARE(window->title(), dash + QStringLiteral("Untitled"));
+        QMetaObject::invokeMethod(store, "redo");
+
+        // Save, with a lot photo.
+        QImage image(200, 100, QImage::Format_RGB32);
+        image.fill(Qt::darkGreen);
+        const QString picture = dir.filePath(QStringLiteral("save-lot.png"));
+        QVERIFY(image.save(picture));
+        QMetaObject::invokeMethod(window, "loadPhoto", Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(picture))));
+        const QString path = dir.filePath(QStringLiteral("Duck pond.cone"));
+        QVariant ok;
+        QMetaObject::invokeMethod(store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+        QVERIFY(ok.toBool());
+        QCOMPARE(window->title(), dash + QStringLiteral("Duck pond"));
+        QCOMPARE(settings->property("recentFiles").toStringList().value(0), QDir::toNativeSeparators(path));
+        const QString saved = store->property("trackText").toString();
+
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray raw = file.readAll();
+        file.close();
+        QVERIFY(raw.startsWith("{\n  \"format\": \"conestructor-track\",\n  \"version\": 1,\n  \"name\": \"Duck pond\""));
+        const QJsonObject doc = QJsonDocument::fromJson(raw).object();
+        QVERIFY(doc.value(QStringLiteral("cones")).toArray().size() > 40);
+        QCOMPARE(doc.value(QStringLiteral("photo")).toObject().value(QStringLiteral("mediaType")).toString(),
+                 QStringLiteral("image/png"));
+        QCOMPARE(doc.value(QStringLiteral("design")).toObject().value(QStringLiteral("elements")).toArray().size(), 4);
+
+        // New, then open it again: the same track, its photo, no undo history.
+        QMetaObject::invokeMethod(store, "newTrack");
+        QCOMPARE(store->property("elementCount").toInt(), 0);
+        QCOMPARE(window->title(), dash + QStringLiteral("Untitled"));
+        QMetaObject::invokeMethod(window, "openTrack", Q_ARG(QVariant, path));
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+        QCOMPARE(window->title(), dash + QStringLiteral("Duck pond"));
+        QVERIFY(!store->property("canUndo").toBool());
+        auto withoutRef = [](const QString &text) {
+            QJsonObject o = QJsonDocument::fromJson(text.toUtf8()).object();
+            QJsonObject p = o.value(QStringLiteral("photo")).toObject();
+            p.remove(QStringLiteral("ref"));
+            o.insert(QStringLiteral("photo"), p);
+            return o;
+        };
+        QCOMPARE(withoutRef(store->property("trackText").toString()), withoutRef(saved));
+        QVERIFY(photo->property("source").toString().startsWith(QStringLiteral("image://photo/")));
+        QTRY_COMPARE(photo->property("status").toInt(), 1);
+        QCOMPARE(photo->property("implicitWidth").toDouble(), 200.0);
+
+        // Not a track: a banner, and the open track stays.
+        const QString notes = dir.filePath(QStringLiteral("notes.cone"));
+        QFile bad(notes);
+        QVERIFY(bad.open(QIODevice::WriteOnly));
+        bad.write("hello");
+        bad.close();
+        QMetaObject::invokeMethod(window, "openTrack", Q_ARG(QVariant, notes));
+        QCOMPARE(findBanner(window)->property("text").toString(), QStringLiteral("That file isn't a Conestructor track."));
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+        QCOMPARE(window->title(), dash + QStringLiteral("Duck pond"));
+
+        // A recent file that has gone is dropped from the list.
+        QVERIFY(QFile::remove(path));
+        QMetaObject::invokeMethod(window, "openRecent", Q_ARG(QVariant, path));
+        QVERIFY(findBanner(window)->property("text").toString().contains(QStringLiteral("isn't there any more")));
+        QVERIFY(!settings->property("recentFiles").toStringList().contains(QDir::toNativeSeparators(path)));
+    }
+
+    // New and closing the window ask first when there are unsaved changes; Cancel keeps everything.
+    void unsavedChangesAskFirst()
+    {
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QObject *dialog = window->findChild<QObject *>(QStringLiteral("unsavedDialog"));
+        QVERIFY(store && dialog);
+        auto click = [&](const QString &text) {
+            QQuickItem *button = findButton(window, text);
+            QVERIFY2(button, qPrintable(text));
+            QTest::mouseClick(window, Qt::LeftButton, {},
+                              button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+        };
+
+        QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QVariantMap move{ { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } };
+        QMetaObject::invokeMethod(store, "run", Q_ARG(QVariant, QStringLiteral("place")), Q_ARG(QVariant, move));
+
+        QMetaObject::invokeMethod(window, "newTrack");
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        click(QStringLiteral("Cancel"));
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+        QCOMPARE(store->property("elementCount").toInt(), 4);
+
+        QMetaObject::invokeMethod(window, "newTrack");
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        click(QStringLiteral("Don't save"));
+        QTRY_COMPARE(store->property("elementCount").toInt(), 0);
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.3 \u2014 Untitled"));
+
+        // Closing with changes asks too; Don't save closes.
+        QMetaObject::invokeMethod(window, "useBlueprint");
+        window->close();
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QVERIFY(window->isVisible());
+        click(QStringLiteral("Don't save"));
+        QTRY_VERIFY(!window->isVisible());
     }
 };
 
