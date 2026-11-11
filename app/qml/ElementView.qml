@@ -124,8 +124,9 @@ Item {
         Rectangle {
             required property int index
             readonly property string end: index === 0 ? "A" : "B"
-            readonly property bool joined: view.element.joins[end] !== null
-            readonly property var at: view.ends[end]
+            // Guarded: a ghost cleared after it is put down empties `ends` before the Repeater drops this ring.
+            readonly property bool joined: view.drawable && view.element.joins[end] !== null
+            readonly property var at: view.ends ? view.ends[end] : ({ x: 0, y: 0 })
             width: (joined ? 8 : view.hoverEnd === end ? 14 : 10) / view.zoom
             height: width
             radius: width / 2

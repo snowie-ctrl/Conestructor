@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Shapes
 import Conestructor
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
@@ -37,6 +38,20 @@ Item {
     property string gestureKey: ""
     property string placingKind: ""   // a palette tile being dragged: a track type, "ruler", "origin" or "direction"
     property var ghost: null          // the track element being placed, as it would land
+    property string placingBy: ""     // "drag": a tile is being dragged; "click": picked up, the next click puts it down
+    property var placingPoint: null   // the photo pixel under the mouse while placing the ruler or a target
+    property var rulerFirst: null     // the ruler's first end, once clicked
+    property bool lengthBoxOpen: false
+    // The ruler as it would land: between the first click and the mouse, or (dragged) 160 screen pixels centred there.
+    readonly property var rulerGhost: {
+        const p = placingPoint
+        if (placingKind !== "ruler" || p === null)
+            return null
+        if (rulerFirst)
+            return { a: rulerFirst, b: p }
+        const half = placingBy === "drag" ? 80 / zoom : 0
+        return { a: { x: p.x - half, y: p.y }, b: { x: p.x + half, y: p.y } }
+    }
     property var box: null            // the selection box being dragged, in screen pixels
     property var hoverNode: null      // the open end under the mouse ({ id, end }), or null
 
@@ -185,9 +200,53 @@ Item {
 ")
     }
 
+    // A tile dragged onto the canvas.
     function beginPlacing(kind) {
+        cancelPlacing()
         placingKind = kind
+        placingBy = "drag"
+    }
+
+    // A tile clicked: it is picked up and follows the mouse until a canvas click puts it down.
+    function pickUp(kind) {
+        cancelPlacing()
+        placingKind = kind
+        placingBy = "click"
+        canvas.forceActiveFocus()
+        TrackStore.message = placingHint(kind)
+    }
+
+    // Clicking the tile that is picked up drops it; any other tile is picked up instead.
+    function clickTile(kind) {
+        if (placingBy === "click" && placingKind === kind)
+            cancelPlacing()
+        else
+            pickUp(kind)
+    }
+
+    function cancelPlacing() {
+        if (placingBy === "click")
+            TrackStore.message = ""
+        placingKind = ""
+        placingBy = ""
         ghost = null
+        placingPoint = null
+        rulerFirst = null
+    }
+
+    function placingHint(kind) {
+        if (kind === "ruler")
+            return rulerFirst ? qsTr("Click the other end · Esc to cancel")
+                              : qsTr("Click one end of something you know the length of · Esc to cancel")
+        if (kind === "origin")
+            return qsTr("Click where Origin goes · Esc to cancel")
+        if (kind === "direction")
+            return qsTr("Click where Direction goes · Esc to cancel")
+        return qsTr("Click where the %1 goes · Esc to cancel").arg(Elements.NAMES[kind])
+    }
+
+    function openLengthBox() {
+        lengthBoxOpen = true
     }
 
     function insideCanvas(sx, sy) {
@@ -195,7 +254,16 @@ Item {
     }
 
     function updatePlacing(sx, sy, ctrl) {
-        if (Elements.TYPES.indexOf(placingKind) < 0 || !insideCanvas(sx, sy) || !(mpp > 0)) {
+        if (!insideCanvas(sx, sy)) {
+            ghost = null
+            placingPoint = null
+            return
+        }
+        if (Elements.TYPES.indexOf(placingKind) < 0) {
+            placingPoint = toWorld(sx, sy)
+            return
+        }
+        if (!(mpp > 0)) {
             ghost = null
             return
         }
@@ -210,18 +278,42 @@ Item {
         ghost = g
     }
 
+    // A dragged tile let go.
     function finishPlacing(sx, sy) {
         const kind = placingKind
         const g = ghost
-        placingKind = ""
-        ghost = null
-        if (!insideCanvas(sx, sy))
-            return
+        cancelPlacing()
+        if (insideCanvas(sx, sy))
+            putDown(kind, toWorld(sx, sy), g, null)
+    }
+
+    // A canvas click while a tile is picked up. The ruler's first click only sets its first end.
+    function clickPlace(sx, sy, ctrl) {
+        const kind = placingKind
         const w = toWorld(sx, sy)
+        if (kind === "ruler" && !rulerFirst) {
+            rulerFirst = w
+            TrackStore.message = placingHint(kind)
+            return
+        }
+        if (kind === "ruler" && distance(rulerFirst, w) * zoom < 3)
+            return                          // the other end must be somewhere else
+        updatePlacing(sx, sy, ctrl)
+        const g = ghost
+        const ends = kind === "ruler" ? { a: rulerFirst, b: w } : null
+        cancelPlacing()
+        putDown(kind, w, g, ends)
+    }
+
+    // Puts a tile down at photo pixel w. A dragged ruler lands centred there, 160 screen pixels long; a clicked one
+    // between its two clicks. A ruler without a length opens the length box.
+    function putDown(kind, w, g, rulerEnds) {
         if (kind === "ruler") {
             const half = 80 / zoom
-            TrackStore.run("setRuler", { a: { x: w.x - half, y: w.y }, b: { x: w.x + half, y: w.y }, realLength: 0 })
+            const ends = rulerEnds || { a: { x: w.x - half, y: w.y }, b: { x: w.x + half, y: w.y } }
+            TrackStore.run("setRuler", { a: ends.a, b: ends.b, realLength: 0 })
             TrackStore.select("ruler")
+            lengthBoxOpen = true
         } else if (kind === "origin" || kind === "direction") {
             TrackStore.run("setTarget", { which: kind, point: { x: w.x, y: w.y } })
             TrackStore.select(kind)
@@ -245,6 +337,13 @@ Item {
 
     function pressAt(e) {
         canvas.forceActiveFocus()
+        if (placingBy === "click" && (e.button === Qt.LeftButton || e.button === Qt.RightButton)) {
+            if (e.button === Qt.LeftButton)
+                clickPlace(e.x, e.y, (e.modifiers & Qt.ControlModifier) !== 0)
+            else
+                cancelPlacing()
+            return
+        }
         gestureKey = TrackStore.newGestureKey()
         const ctrl = (e.modifiers & Qt.ControlModifier) !== 0
         const shift = (e.modifiers & Qt.ShiftModifier) !== 0
@@ -315,6 +414,8 @@ Item {
         hover = toWorld(e.x, e.y)
         if (!mouse.pressed)
             hoverNode = placingKind === "" ? nodeAt(hover) : null
+        if (placingBy === "click")
+            updatePlacing(e.x, e.y, (e.modifiers & Qt.ControlModifier) !== 0)
         if (!mouse.pressed || mode === "")
             return
         // Nothing but a pan moves until the pointer has travelled a drag's distance: a click that wobbles a pixel
@@ -400,6 +501,10 @@ Item {
     }
 
     Keys.onPressed: (e) => {
+        if (e.key === Qt.Key_Escape && placingBy !== "") {
+            cancelPlacing()
+            e.accepted = true
+        }
         if (e.key === Qt.Key_Space && !e.isAutoRepeat) {
             spaceHeld = true
             e.accepted = true
@@ -458,6 +563,48 @@ Item {
         ConePreview { zoom: canvas.zoom }
         RulerView { zoom: canvas.zoom }
         TargetsView { zoom: canvas.zoom }
+
+        // A ruler or target being placed, where it would land.
+        Item {
+            visible: canvas.placingPoint !== null
+            opacity: 0.6
+            Image {
+                visible: canvas.placingKind === "origin" || canvas.placingKind === "direction"
+                source: "qrc:/qt/qml/Conestructor/assets/images/crosshair.svg"
+                width: 32 / canvas.zoom
+                height: width
+                x: canvas.placingPoint ? canvas.placingPoint.x - width / 2 : 0
+                y: canvas.placingPoint ? canvas.placingPoint.y - height / 2 : 0
+                sourceSize: Qt.size(64, 64)
+            }
+            Shape {
+                visible: canvas.rulerGhost !== null
+                preferredRendererType: Shape.CurveRenderer
+                ShapePath {
+                    strokeColor: "#f5cb42"
+                    strokeWidth: 2 / canvas.zoom
+                    fillColor: "transparent"
+                    startX: canvas.rulerGhost ? canvas.rulerGhost.a.x : 0
+                    startY: canvas.rulerGhost ? canvas.rulerGhost.a.y : 0
+                    PathLine {
+                        x: canvas.rulerGhost ? canvas.rulerGhost.b.x : 0
+                        y: canvas.rulerGhost ? canvas.rulerGhost.b.y : 0
+                    }
+                }
+            }
+            Repeater {
+                model: canvas.rulerGhost ? [canvas.rulerGhost.a, canvas.rulerGhost.b] : []
+                Rectangle {
+                    required property var modelData
+                    width: 12 / canvas.zoom
+                    height: width
+                    radius: width / 2
+                    x: modelData.x - width / 2
+                    y: modelData.y - height / 2
+                    color: "#f5cb42"
+                }
+            }
+        }
     }
 
     // Labels drawn in screen pixels, so text stays sharp and the same size at any zoom.
@@ -553,4 +700,7 @@ Item {
         MenuItem { text: qsTr("Delete"); onTriggered: TrackStore.deleteSelected() }
         MenuItem { text: qsTr("Reverse direction"); onTriggered: TrackStore.reverseSelected() }
     }
+
+    // After the MouseArea, so clicks in the box reach it.
+    RulerLengthBox { canvas: canvas }
 }

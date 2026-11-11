@@ -1837,13 +1837,13 @@ git commit -m "Gate nodes: drag an open end to pivot and stretch (stretch only w
         QQuickItem *box = w.named(QStringLiteral("rulerLengthBox"));
         QVERIFY(box);
         QTRY_VERIFY(box->isVisible());
-        QTest::keyClicks(w.window, QStringLiteral("abc"));
+        typeText(w.window, QStringLiteral("abc"));
         QTest::keyClick(w.window, Qt::Key_Return);
         QVERIFY(box->isVisible());
         QVERIFY(box->property("bad").toBool());
         QCOMPARE(ruler().value("realLength").toDouble(), 0.0);
         QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
-        QTest::keyClicks(w.window, QStringLiteral("18' 6\""));
+        typeText(w.window, QStringLiteral("18' 6\""));
         QTest::keyClick(w.window, Qt::Key_Return);
         QTRY_VERIFY(!box->isVisible());
         QVERIFY(std::abs(ruler().value("realLength").toDouble() - 5.6388) < 1e-9);
@@ -2379,7 +2379,7 @@ git commit -m "Tiles place by clicking as well as dragging; the ruler by two cli
         w.click({ 500, 500 });
         QCOMPARE(step(), QStringLiteral("rulerLength"));
         QTRY_VERIFY(w.named(QStringLiteral("rulerLengthBox"))->isVisible());
-        QTest::keyClicks(w.window, QStringLiteral("20"));             // a bare number is feet in feet and inches
+        typeText(w.window, QStringLiteral("20"));             // a bare number is feet in feet and inches
         QTest::keyClick(w.window, Qt::Key_Return);
         QCOMPARE(step(), QStringLiteral("origin"));
 

@@ -81,6 +81,13 @@ static QVariant plain(const QVariant &v)
     return v.userType() == qMetaTypeId<QJSValue>() ? qvariant_cast<QJSValue>(v).toVariant() : v;
 }
 
+// Types text into whatever has focus in `window` (QTest::keyClicks takes widgets only).
+static void typeText(QWindow *window, const QString &text)
+{
+    for (const QChar c : text)
+        QTest::keyClick(window, c.toLatin1());
+}
+
 // One loaded Main with the helpers the part 3 window tests share.
 struct Loaded
 {
@@ -1373,6 +1380,115 @@ private slots:
         const QPointF joint = w.screen(x1 + length / 2, y1);
         w.drag(joint, joint + QPointF(0, 40));
         QVERIFY2(!w.label().startsWith(QStringLiteral("Stretch")), qPrintable(w.label()));
+    }
+
+    // Every tile places by clicking it, then the canvas; the ruler takes two clicks and then asks for its length on
+    // the spot. Review focus 1, 2 and 5: undo with the box open, typing in feet and inches or nonsense, switching tiles.
+    void tilesPlaceByClicking()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        auto placing = [&]() { return w.canvas->property("placingBy").toString(); };
+        auto kind = [&]() { return w.canvas->property("placingKind").toString(); };
+        auto ruler = [&]() { return w.track().value("ruler").toMap(); };
+
+        // The ruler: two clicks, a rubber band between them.
+        w.clickItem(w.tile(QStringLiteral("ruler")));
+        QCOMPARE(placing(), QStringLiteral("click"));
+        QCOMPARE(kind(), QStringLiteral("ruler"));
+        QTest::mouseMove(w.window, w.scene({ 300, 400 }));
+        QVERIFY(!isNull(w.canvas->property("placingPoint")));
+        w.click({ 300, 400 });
+        QVERIFY(ruler().isEmpty());
+        QVERIFY(!isNull(w.canvas->property("rulerFirst")));
+        QTest::mouseMove(w.window, w.scene({ 500, 400 }));
+        QVERIFY(!isNull(w.canvas->property("rulerGhost")));
+        w.click({ 500, 400 });
+        QCOMPARE(placing(), QString());
+        const QPointF a = w.world({ 300, 400 });
+        QVERIFY(std::abs(ruler().value("a").toMap().value("x").toDouble() - a.x()) < 1.0 / w.zoom() + 1e-9);
+        QCOMPARE(ruler().value("realLength").toDouble(), 0.0);
+
+        // The length box is open and focused: nonsense turns red and stays; 18' 6" sets 5.6388 m and closes it.
+        QQuickItem *box = w.named(QStringLiteral("rulerLengthBox"));
+        QVERIFY(box);
+        QTRY_VERIFY(box->isVisible());
+        typeText(w.window, QStringLiteral("abc"));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QVERIFY(box->isVisible());
+        QVERIFY(box->property("bad").toBool());
+        QCOMPARE(ruler().value("realLength").toDouble(), 0.0);
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("18' 6\""));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QTRY_VERIFY(!box->isVisible());
+        QVERIFY(std::abs(ruler().value("realLength").toDouble() - 5.6388) < 1e-9);
+        QCOMPARE(w.label(), QStringLiteral("Set ruler"));
+
+        // Undo with the box open: undo the length, then undo the ruler itself while the box shows: it closes for good.
+        QMetaObject::invokeMethod(w.store, "undo");          // length off: the box does not reopen by itself
+        QVERIFY(!box->isVisible());
+        QMetaObject::invokeMethod(w.canvas, "openLengthBox");
+        QTRY_VERIFY(box->isVisible());
+        QMetaObject::invokeMethod(w.store, "undo");          // the ruler goes
+        QTRY_VERIFY(!box->isVisible());
+        QVERIFY(!w.canvas->property("lengthBoxOpen").toBool());
+        QMetaObject::invokeMethod(w.store, "redo");
+        QVERIFY(!box->isVisible());
+        QMetaObject::invokeMethod(w.store, "redo");          // the length back
+
+        // Switching tiles: only one is picked up; the same tile again, Esc or a right-click drops it.
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        QCOMPARE(kind(), QStringLiteral("origin"));
+        QVERIFY(w.store->property("message").toString().contains(QStringLiteral("Esc to cancel")));
+        w.clickItem(w.tile(QStringLiteral("direction")));
+        QCOMPARE(kind(), QStringLiteral("direction"));
+        w.clickItem(w.tile(QStringLiteral("direction")));
+        QCOMPARE(placing(), QString());
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QCOMPARE(placing(), QString());
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        w.click({ 400, 500 }, Qt::RightButton);
+        QCOMPARE(placing(), QString());
+        QVERIFY(w.track().value("targets").toMap().value("origin").isNull());
+
+        // Origin and Direction by clicking.
+        w.clickItem(w.tile(QStringLiteral("origin")));
+        w.click({ 400, 500 });
+        QCOMPARE(w.label(), QStringLiteral("Place Origin"));
+        w.clickItem(w.tile(QStringLiteral("direction")));
+        w.click({ 900, 500 });
+        QCOMPARE(w.label(), QStringLiteral("Place Direction"));
+
+        // A track piece by clicking, now setup is done: the ghost follows, a click adds it.
+        w.clickItem(w.tile(QStringLiteral("straight")));
+        QTest::mouseMove(w.window, w.scene({ 600, 650 }));
+        QVERIFY(!isNull(w.canvas->property("ghost")));
+        w.click({ 600, 650 });
+        QCOMPARE(w.store->property("elementCount").toInt(), 1);
+        QCOMPARE(w.label(), QStringLiteral("Add Straight"));
+        QCOMPARE(placing(), QString());
+    }
+
+    // Dragging the ruler or a target from its tile shows where it will land, as track pieces already did.
+    void draggingATileShowsAGhost()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        QQuickItem *origin = w.tile(QStringLiteral("origin"));
+        const QPoint start = origin->mapToScene(QPointF(origin->width() / 2, origin->height() / 2)).toPoint();
+        const QPoint end = w.scene({ 400, 500 });
+        QTest::mousePress(w.window, Qt::LeftButton, {}, start);
+        for (int i = 1; i <= 8; ++i)
+            QTest::mouseMove(w.window, start + (end - start) * i / 8);
+        QCOMPARE(w.canvas->property("placingBy").toString(), QStringLiteral("drag"));
+        QVERIFY(!isNull(w.canvas->property("placingPoint")));
+        QTest::mouseRelease(w.window, Qt::LeftButton, {}, end);
+        QCOMPARE(w.label(), QStringLiteral("Place Origin"));
+        QVERIFY(isNull(w.canvas->property("placingPoint")));
     }
 };
 
