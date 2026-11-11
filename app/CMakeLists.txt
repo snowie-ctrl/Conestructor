@@ -55,6 +55,7 @@ qt_add_qml_module(conestructor_core
         qml/logic/selection.mjs
         qml/logic/setup.mjs
         qml/logic/conefile.mjs
+        qml/logic/nodes.mjs
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp

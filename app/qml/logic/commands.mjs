@@ -204,6 +204,16 @@ const COMMANDS = {
                 Snapping.joinTouching(t.elements, id)
         }
         return t
+    },
+    // A gate-node drag: the element's new place and one stretched setting, as one step.
+    stretch(t, a) {
+        const el = find(t, a.id)
+        el.x = a.x
+        el.y = a.y
+        el.rotation = Elements.normalizeAngle(a.rotation)
+        el.props[a.key] = Elements.clampProp(el.type, a.key, a.value).value
+        Snapping.unjoinApart(t.elements)
+        return t
     }
 }
 
@@ -242,6 +252,7 @@ export function label(track, name, a) {
     }
     case "removeMany": return "Delete " + (a.ids.length === 1 ? named(a.ids[0]) : a.ids.length + " elements")
     case "duplicateMany": return "Duplicate " + (a.ids.length === 1 ? named(a.ids[0]) : a.ids.length + " elements")
+    case "stretch": return "Stretch " + named(a.id)
     case "placeMany":
         return (a.verb || "Move") + " " + (a.moves.length === 1 ? named(a.moves[0].id) : a.moves.length + " elements")
     }

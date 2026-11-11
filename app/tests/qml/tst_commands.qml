@@ -460,4 +460,16 @@ TestCase {
         compare(byId(t, "e1").joins.A, null)
         compare(byId(t, "e2").joins.B, null)
     }
+
+    function test_stretchMovesAndChangesOneSettingAsOneStep() {
+        const s = new Commands.UndoStack()
+        const t0 = base()
+        const t1 = Commands.run(s, t0, "stretch", { id: "e3", x: 1, y: 2, rotation: 400, key: "length", value: 30, mergeKey: "g1" })
+        compare(byId(t1, "e3").rotation, 40)
+        const t2 = Commands.run(s, t1, "stretch", { id: "e3", x: 1, y: 3, rotation: 40, key: "length", value: 300, mergeKey: "g1" })
+        compare(byId(t2, "e3").props.length, 200)            // kept within its limits
+        compare(s.undoLabel(), "Stretch Straight")
+        compare(s.done.length, 1)
+        compare(JSON.stringify(s.undo()), JSON.stringify(t0))
+    }
 }
