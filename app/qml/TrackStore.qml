@@ -39,6 +39,12 @@ QtObject {
     // The one element selected, or null.
     readonly property var selectedElement: selection.length === 1 && selectedElements.length === 1 ? selectedElements[0] : null
 
+    // Cones picked for touch-ups: positions in the placed list (preview.canvasCones). Never selected with elements. Dropped
+    // when the cones are hidden or cleared, and when the number of touched-up cones changes (see setTrack).
+    property var coneSelection: []
+    onShowConesChanged: coneSelection = []
+    onPreviewOnChanged: if (!previewOn) coneSelection = []
+
     // Elements driven against the rest of their chain: they show a warning (Reverse direction fixes it).
     readonly property var backwardIds: Post.backwards(track.elements)
     // Elements whose inside edge crosses over itself: they show a warning too (advice only).
@@ -90,6 +96,10 @@ QtObject {
     signal trackReplaced()
 
     function setTrack(t) {
+        const before = track.touchUps ? track.touchUps.cones.length : -1
+        const after = t.touchUps ? t.touchUps.cones.length : -1
+        if (after !== before && coneSelection.length > 0)
+            coneSelection = []          // the positions would name other cones
         track = t
         const kept = selection.filter(id => exists(id))
         if (kept.length !== selection.length)
@@ -147,6 +157,7 @@ QtObject {
         previewOn = false
         preview = null
         selection = []
+        coneSelection = []
         setTrack(t)
         trackReplaced()
     }
@@ -271,6 +282,8 @@ QtObject {
 
     // Selects `id` alone ("" selects nothing).
     function select(id) {
+        if (coneSelection.length > 0)
+            coneSelection = []
         const next = id === "" ? [] : [id]
         if (JSON.stringify(next) === JSON.stringify(selection))
             return
@@ -281,6 +294,7 @@ QtObject {
     // Adds an element to the selection or takes it out (Ctrl+click). A ruler or target selected before is dropped.
     function toggle(id) {
         stack.seal()
+        coneSelection = []
         const elementsOnly = selection.filter(s => element(s) !== null)
         selection = elementsOnly.indexOf(id) >= 0 ? elementsOnly.filter(s => s !== id) : elementsOnly.concat([id])
     }
@@ -288,6 +302,7 @@ QtObject {
     // Selects these elements, or adds them to the elements already selected.
     function selectMany(ids, add) {
         stack.seal()
+        coneSelection = []
         const start = add ? selection.filter(s => element(s) !== null) : []
         selection = start.concat(ids.filter(id => start.indexOf(id) < 0))
     }
@@ -298,7 +313,41 @@ QtObject {
             select(list[list.length - 1].id)
     }
 
+    function isConeSelected(index) {
+        return coneSelection.indexOf(index) >= 0
+    }
+
+    // Selects these cones, or adds them to the cones selected; any element, ruler or target selection is dropped.
+    function selectCones(indices, add) {
+        stack.seal()
+        selection = []
+        const start = add ? coneSelection : []
+        coneSelection = start.concat(indices.filter(i => start.indexOf(i) < 0))
+    }
+
+    // Ctrl+click on a cone.
+    function toggleCone(index) {
+        stack.seal()
+        selection = []
+        coneSelection = isConeSelected(index) ? coneSelection.filter(i => i !== index) : coneSelection.concat([index])
+    }
+
+    // Makes the selected cones standing or leaning (one step).
+    function setConeTypes(type) {
+        if (coneSelection.length === 0)
+            return
+        run("setConeType", { indices: coneSelection, type: type })
+        stack.seal()
+    }
+
     function deleteSelected() {
+        if (coneSelection.length > 0) {
+            const indices = coneSelection
+            coneSelection = []
+            run("deleteCones", { indices: indices })
+            stack.seal()
+            return
+        }
         if (selection.length === 0)
             return
         if (locked) {

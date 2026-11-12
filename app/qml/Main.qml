@@ -199,9 +199,23 @@ ApplicationWindow {
         return TrackStore.previewOn && TrackStore.preview ? TrackStore.preview.cones.length : 0
     }
 
-    // Process › Place cones and the Cones box's button. Task 6 asks first when touch-ups would be cleared.
+    // Runs `action` at once, or after asking to clear the touch-ups when there are some (Clear preview, Place cones).
+    function whenUntouched(action) {
+        if (!TrackStore.locked) {
+            action()
+            return
+        }
+        touchUpsDialog.action = action
+        touchUpsDialog.open()
+    }
+
+    // Process › Place cones and the Cones box's button.
     function placeCones() {
-        TrackStore.placeCones()
+        whenUntouched(() => TrackStore.placeCones())
+    }
+
+    function clearPreview() {
+        whenUntouched(() => TrackStore.clearPreview())
     }
 
     menuBar: MenuBar {
@@ -259,7 +273,7 @@ ApplicationWindow {
             Action {
                 text: qsTr("Delete")
                 shortcut: StandardKey.Delete
-                enabled: TrackStore.selection.length > 0
+                enabled: TrackStore.selection.length > 0 || TrackStore.coneSelection.length > 0
                 onTriggered: TrackStore.deleteSelected()
             }
             Action {
@@ -307,7 +321,7 @@ ApplicationWindow {
         Menu {
             title: qsTr("&Process")
             Action { text: qsTr("Place cones"); onTriggered: window.placeCones() }
-            Action { text: qsTr("Clear preview"); enabled: TrackStore.previewOn; onTriggered: TrackStore.clearPreview() }
+            Action { text: qsTr("Clear preview"); enabled: TrackStore.previewOn; onTriggered: window.clearPreview() }
         }
     }
 
@@ -464,6 +478,33 @@ ApplicationWindow {
             action()
         }
         onRejected: window.pendingAction = null
+    }
+
+    Dialog {
+        id: touchUpsDialog
+        objectName: "touchUpsDialog"
+        property var action: null
+        implicitWidth: 420      // fixed: Fusion's Dialog sizing loops with a custom button box
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qsTr("Touched-up cones")
+        Label {
+            width: touchUpsDialog.availableWidth
+            wrapMode: Text.Wrap
+            text: TrackStore.touchUpChanges === 1 ? qsTr("Clear 1 touch-up and unlock the track?")
+                  : qsTr("Clear %1 touch-ups and unlock the track?").arg(TrackStore.touchUpChanges)
+        }
+        footer: DialogButtonBox {
+            Button { text: qsTr("Clear"); DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
+            Button { text: qsTr("Cancel"); DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+        }
+        onAccepted: {
+            const run = action
+            action = null
+            if (run)
+                run()
+        }
+        onRejected: action = null
     }
 
     Dialog {

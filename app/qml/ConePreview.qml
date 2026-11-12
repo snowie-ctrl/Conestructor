@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Shapes
 import Conestructor
+import "logic/touchups.mjs" as Touchups
 
 // Placed cones at true size (10.5 in base; a leaning cone is 18 in long), in photo pixels, and the yellow route line
 // through them in driving order. View > Show cones (C) and Show route line (R) toggle each.
@@ -42,6 +43,40 @@ Item {
             rotation: modelData.heading
             sourceSize: Qt.size(64, 64)
             smooth: true
+        }
+    }
+
+    // The cones picked for touch-ups: a ring around each.
+    Repeater {
+        model: TrackStore.showCones ? TrackStore.coneSelection : []
+        Rectangle {
+            objectName: "coneRing"
+            required property int modelData
+            readonly property var cone: conePreview.cones[modelData] || null
+            visible: cone !== null
+            width: 2 * (cone ? Touchups.radius(cone) : 0) / conePreview.mpp + 8 / conePreview.zoom
+            height: width
+            radius: width / 2
+            x: cone ? cone.x / conePreview.mpp - width / 2 : 0
+            y: cone ? cone.y / conePreview.mpp - height / 2 : 0
+            color: "transparent"
+            border.color: "#2f6fd6"
+            border.width: 2 / conePreview.zoom
+        }
+    }
+
+    // Touched-up cones (moved, retyped, turned or added) carry a small blue dot.
+    Repeater {
+        model: TrackStore.showCones ? conePreview.cones.filter(c => c.edited) : []
+        Rectangle {
+            objectName: "editedDot"
+            required property var modelData
+            width: 6 / conePreview.zoom
+            height: width
+            radius: width / 2
+            x: modelData.x / conePreview.mpp - width / 2
+            y: modelData.y / conePreview.mpp - height / 2
+            color: "#3d8bff"
         }
     }
 }

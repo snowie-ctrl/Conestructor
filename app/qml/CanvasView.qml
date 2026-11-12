@@ -8,6 +8,7 @@ import "logic/nodes.mjs" as Nodes
 import "logic/selection.mjs" as Selection
 import "logic/setup.mjs" as Setup
 import "logic/snapping.mjs" as Snapping
+import "logic/touchups.mjs" as Touchups
 import "logic/units.mjs" as Units
 import "logic/viewport.mjs" as Viewport
 
@@ -67,6 +68,8 @@ Item {
     }
     property var box: null            // the selection box being dragged, in screen pixels
     property var hoverNode: null      // the open end under the mouse ({ id, end }), or null
+    // Placed cones are showing: they can be picked for touch-ups.
+    readonly property bool conesShown: TrackStore.previewOn && TrackStore.showCones && TrackStore.preview !== null
 
     // The backwards element whose warning is under the cursor ("" when none), for its tip.
     readonly property string hoverWarning: {
@@ -163,6 +166,13 @@ Item {
         return null
     }
 
+    // The placed cone under photo pixel w (the nearest whose footprint, grown by 4 screen pixels, covers it), or -1.
+    function coneAt(w) {
+        if (!conesShown || !(mpp > 0))
+            return -1
+        return Touchups.coneAt(TrackStore.preview.canvasCones, { x: w.x * mpp, y: w.y * mpp }, 4 / zoom * mpp)
+    }
+
     // What is under a screen point, most specific first.
     function hitAt(sx, sy) {
         const w = toWorld(sx, sy)
@@ -185,6 +195,9 @@ Item {
             if (p && distance(p, w) < 16 / zoom)
                 return { kind: "target", which: which }
         }
+        const cone = coneAt(w)
+        if (cone >= 0)
+            return { kind: "cone", index: cone }
         const node = nodeAt(w)
         if (node)
             return node
@@ -370,6 +383,12 @@ Item {
         if (hit && hit.kind === "node" && (e.button !== Qt.LeftButton || (e.modifiers & Qt.ControlModifier) !== 0))
             hit = { kind: "element", id: hit.id }
         if (e.button === Qt.RightButton) {
+            if (hit && hit.kind === "cone") {
+                if (!TrackStore.isConeSelected(hit.index))
+                    TrackStore.selectCones([hit.index], false)
+                coneMenu.popup()
+                return
+            }
             if (hit && hit.kind === "element") {
                 if (!TrackStore.isSelected(hit.id))
                     TrackStore.select(hit.id)
@@ -399,6 +418,18 @@ Item {
             }
             TrackStore.select("")
             mode = "pan"
+            return
+        }
+        if (hit.kind === "cone") {
+            if (ctrl) {
+                TrackStore.toggleCone(hit.index)
+                return
+            }
+            if (!TrackStore.isConeSelected(hit.index))
+                TrackStore.selectCones([hit.index], false)
+            press.cone = hit.index
+            press.c = Object.assign({}, TrackStore.preview.canvasCones[hit.index])
+            mode = "cone"
             return
         }
         const t = TrackStore.track
@@ -515,8 +546,14 @@ Item {
         if (mode === "box" && press.dragging && mpp > 0) {
             const a = press.w
             const b = toWorld(e.x, e.y)
-            TrackStore.selectMany(Selection.boxHits(TrackStore.track.elements, { x: a.x * mpp, y: a.y * mpp },
-                                                    { x: b.x * mpp, y: b.y * mpp }), press.add)
+            const ma = { x: a.x * mpp, y: a.y * mpp }
+            const mb = { x: b.x * mpp, y: b.y * mpp }
+            if (conesShown)
+                TrackStore.selectCones(Touchups.inBox(TrackStore.preview.canvasCones, ma, mb), press.add)
+            else
+                TrackStore.selectMany(Selection.boxHits(TrackStore.track.elements, ma, mb), press.add)
+        } else if (mode === "cone" && !press.dragging && !press.ctrl && TrackStore.coneSelection.length > 1) {
+            TrackStore.selectCones([press.cone], false)        // a plain click on one of several selects only it
         } else if (mode === "moveGroup" && !press.dragging && !press.ctrl) {
             TrackStore.select(press.el.id)       // a plain click on one of several selects only it
         }
@@ -727,6 +764,18 @@ Item {
         MenuItem { text: qsTr("Duplicate"); enabled: !TrackStore.locked; onTriggered: TrackStore.duplicateSelected() }
         MenuItem { text: qsTr("Delete"); enabled: !TrackStore.locked; onTriggered: TrackStore.deleteSelected() }
         MenuItem { text: qsTr("Reverse direction"); enabled: !TrackStore.locked; onTriggered: TrackStore.reverseSelected() }
+    }
+
+    Menu {
+        id: coneMenu
+        objectName: "coneMenu"
+        MenuItem {
+            text: TrackStore.coneSelection.length > 1 ? qsTr("Delete %1 cones").arg(TrackStore.coneSelection.length)
+                                                      : qsTr("Delete cone")
+            onTriggered: TrackStore.deleteSelected()
+        }
+        MenuItem { text: qsTr("Make leaning"); onTriggered: TrackStore.setConeTypes("leaning") }
+        MenuItem { text: qsTr("Make standing"); onTriggered: TrackStore.setConeTypes("standing") }
     }
 
     // After the MouseArea, so clicks in the box reach it.

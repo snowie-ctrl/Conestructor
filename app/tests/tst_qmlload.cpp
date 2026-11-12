@@ -62,6 +62,25 @@ static QQuickItem *findField(QQuickWindow *window, const QString &label)
     return nullptr;
 }
 
+// A visible item showing exactly this text.
+static QQuickItem *findText(QQuickWindow *window, const QString &text)
+{
+    for (QQuickItem *item : allItems(window->contentItem()))
+        if (item->isVisible() && item->property("text").toString() == text)
+            return item;
+    return nullptr;
+}
+
+// A visible menu item with this text (menus live under the window's overlay, inside the content item).
+static QQuickItem *findMenuItem(QQuickWindow *window, const QString &text)
+{
+    for (QQuickItem *item : allItems(window->contentItem()))
+        if (item->isVisible() && item->property("text").toString() == text
+            && QByteArray(item->metaObject()->className()).contains("MenuItem"))
+            return item;
+    return nullptr;
+}
+
 static QQuickItem *textBox(QQuickItem *field)
 {
     for (QQuickItem *item : allItems(field))
@@ -200,6 +219,14 @@ struct Loaded
             if (QByteArray(item->metaObject()->className()).startsWith("PaletteTile") && item->property("kind").toString() == kind)
                 return item;
         return nullptr;
+    }
+    // The placed cones (canvas metres, driving order), or none when the preview is off.
+    QVariantList cones() const { return plain(store->property("preview")).toMap().value("canvasCones").toList(); }
+    // Placed cone `i` on screen (canvas coordinates).
+    QPointF conePoint(int i) const
+    {
+        const QVariantMap c = cones().value(i).toMap();
+        return screen(c.value("x").toDouble(), c.value("y").toDouble());
     }
     // The ElementView drawing element `id`.
     QQuickItem *view(const QString &id) const
@@ -1853,6 +1880,147 @@ private slots:
         QMetaObject::invokeMethod(w.store, "undo");            // back past the only touch-up: unlocked
         QVERIFY(!w.store->property("locked").toBool());
         QVERIFY(w.tile(QStringLiteral("straight"))->property("usable").toBool());
+    }
+
+    // Part 4: placed cones are picked (click, Ctrl+click, a box) and touched up; the first touch-up locks the track;
+    // Clear preview and Place cones ask first, Cancel keeps everything, Clear unlocks. Review focus 1, 2 and 3.
+    void touchingUpCones()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        const int placed = w.cones().size();
+        QVERIFY(placed > 40);
+
+        w.click(w.conePoint(0));
+        QCOMPARE(plain(w.store->property("coneSelection")).toList(), QVariantList{ 0 });
+        QVERIFY(plain(w.store->property("selection")).toList().isEmpty());
+        QVERIFY(findText(w.window, QStringLiteral("Cone 1 of %1").arg(placed)));
+        QVERIFY(findText(w.window, QStringLiteral("From Straight e1")));
+        QVERIFY(w.named(QStringLiteral("coneRing")));
+
+        // Review focus 3: hiding the cones drops the selection, so Delete deletes nothing.
+        w.store->setProperty("showCones", false);
+        QVERIFY(plain(w.store->property("coneSelection")).toList().isEmpty());
+        QTest::keyClick(w.window, Qt::Key_Delete);
+        QVERIFY(!w.store->property("locked").toBool());
+        w.store->setProperty("showCones", true);
+
+        w.click(w.conePoint(0));
+        QTest::keyClick(w.window, Qt::Key_Delete);
+        QVERIFY(w.store->property("locked").toBool());
+        QCOMPARE(w.label(), QStringLiteral("Delete cone"));
+        QCOMPARE(w.cones().size(), placed - 1);
+        QVERIFY(plain(w.store->property("coneSelection")).toList().isEmpty());
+
+        w.click(w.conePoint(0));
+        QTest::mouseClick(w.window, Qt::LeftButton, Qt::ControlModifier, w.scene(w.conePoint(1)));
+        QCOMPARE(plain(w.store->property("coneSelection")).toList(), (QVariantList{ 0, 1 }));
+        QVERIFY(findText(w.window, QStringLiteral("2 cones selected")));
+        QTest::keyClick(w.window, Qt::Key_Backspace);
+        QCOMPARE(w.label(), QStringLiteral("Delete 2 cones"));
+        QCOMPARE(w.cones().size(), placed - 3);
+
+        // A Shift box from empty canvas picks exactly the cones inside it.
+        const QVariantMap c0 = w.cones().value(0).toMap();
+        const double bx = c0.value("x").toDouble() + 0.5;
+        const double by = c0.value("y").toDouble() + 0.5;
+        const QPointF corner = w.screen(1, 1);
+        const QPointF far = w.screen(bx, by);
+        QTest::mousePress(w.window, Qt::LeftButton, Qt::ShiftModifier, w.scene(corner));
+        QTest::mouseMove(w.window, w.scene((corner + far) / 2));
+        QTest::mouseMove(w.window, w.scene(far));
+        QTest::mouseRelease(w.window, Qt::LeftButton, Qt::ShiftModifier, w.scene(far));
+        int inside = 0;
+        for (const QVariant &v : w.cones()) {
+            const QVariantMap c = v.toMap();
+            if (c.value("x").toDouble() >= 1 && c.value("x").toDouble() <= bx && c.value("y").toDouble() >= 1
+                && c.value("y").toDouble() <= by)
+                ++inside;
+        }
+        const QVariantList boxed = plain(w.store->property("coneSelection")).toList();
+        QVERIFY(boxed.contains(0));
+        QCOMPARE(boxed.size(), inside);
+
+        // The panel's Type switch: a standing cone made leaning gets a blue dot.
+        int standing = -1;
+        const QVariantList now = w.cones();
+        for (int i = 0; i < now.size() && standing < 0; ++i)
+            if (now[i].toMap().value("type").toString() == QStringLiteral("standing"))
+                standing = i;
+        w.click(w.conePoint(standing));
+        w.clickItem(findButton(w.window, QStringLiteral("Leaning")));
+        QCOMPARE(w.label(), QStringLiteral("Make leaning"));
+        QCOMPARE(w.cones().value(standing).toMap().value("type").toString(), QStringLiteral("leaning"));
+        QVERIFY(w.named(QStringLiteral("editedDot")));
+        QCOMPARE(w.store->property("touchUpChanges").toInt(), 4);
+
+        // Review focus 2: Cancel keeps everything, from Clear preview and from Place cones.
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("touchUpsDialog"));
+        QVERIFY(dialog);
+        for (const char *ask : { "clearPreview", "placeCones" }) {
+            QMetaObject::invokeMethod(w.window, ask);
+            QTRY_VERIFY(dialog->property("opened").toBool());
+            QVERIFY(findText(w.window, QStringLiteral("Clear 4 touch-ups and unlock the track?")));
+            w.clickItem(findButton(w.window, QStringLiteral("Cancel")));
+            QTRY_VERIFY(!dialog->property("opened").toBool());
+            QVERIFY(w.store->property("locked").toBool());
+            QVERIFY(w.store->property("previewOn").toBool());
+            QCOMPARE(w.cones().size(), placed - 3);
+        }
+
+        QMetaObject::invokeMethod(w.window, "clearPreview");
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        w.clickItem(findButton(w.window, QStringLiteral("Clear")));
+        QTRY_VERIFY(!w.store->property("locked").toBool());
+        QVERIFY(!w.store->property("previewOn").toBool());
+        QCOMPARE(w.label(), QStringLiteral("Clear touch-ups"));
+        QMetaObject::invokeMethod(w.store, "undo");
+        QVERIFY(w.store->property("locked").toBool());
+        QVERIFY(w.store->property("previewOn").toBool());
+        QCOMPARE(w.cones().size(), placed - 3);
+
+        // Review focus 1: undo back past the first touch-up with a cone selected.
+        w.click(w.conePoint(0));
+        QCOMPARE(plain(w.store->property("coneSelection")).toList().size(), 1);
+        for (int i = 0; i < 3; ++i)
+            QMetaObject::invokeMethod(w.store, "undo");          // Make leaning, Delete 2 cones, Delete cone
+        QVERIFY(!w.store->property("locked").toBool());
+        QVERIFY(plain(w.store->property("coneSelection")).toList().isEmpty());
+        QVERIFY(w.store->property("previewOn").toBool());
+        QCOMPARE(w.cones().size(), placed);
+    }
+
+    // Part 4: the touched-up list is what the file holds, and the track opens again locked with it.
+    void aTouchedUpTrackReopensLocked()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        const int placed = w.cones().size();
+        w.run(QStringLiteral("deleteCones"), { { "indices", QVariantList{ 0 } } });
+        w.run(QStringLiteral("addCone"), { { "x", 5.0 }, { "y", 5.0 } });
+        const QString path = dir.filePath(QStringLiteral("Touched up.cone"));
+        QVariant saved;
+        QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, saved), Q_ARG(QVariant, path));
+        QVERIFY(saved.toBool());
+
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonArray cones = QJsonDocument::fromJson(file.readAll()).object().value("cones").toArray();
+        QCOMPARE(cones.size(), placed);
+        QVERIFY(cones.last().toObject().value("element").isNull());
+        QVERIFY(cones.last().toObject().value("edited").toBool());
+        QVERIFY(!cones.first().toObject().contains("edited"));
+
+        QMetaObject::invokeMethod(w.store, "newTrack");
+        QVERIFY(!w.store->property("locked").toBool());
+        QVariant opened;
+        QMetaObject::invokeMethod(w.store, "openPath", Q_RETURN_ARG(QVariant, opened), Q_ARG(QVariant, path));
+        QVERIFY(opened.toBool());
+        QVERIFY(w.store->property("locked").toBool());
+        QVERIFY(w.store->property("previewOn").toBool());
+        QCOMPARE(w.cones().size(), placed);
     }
 };
 

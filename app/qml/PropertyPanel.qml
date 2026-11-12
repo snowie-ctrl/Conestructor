@@ -16,7 +16,16 @@ ScrollView {
 
     readonly property var el: TrackStore.selectedElement
     readonly property var many: TrackStore.selectedElements.length > 1 ? TrackStore.selectedElements : []
-    readonly property string kind: el ? "element" : many.length > 1 ? "many" : TrackStore.selectedId
+    readonly property var placed: TrackStore.previewOn && TrackStore.preview ? TrackStore.preview.canvasCones : []
+    readonly property var pickedCones: TrackStore.coneSelection.map(i => placed[i]).filter(c => c !== undefined)
+    readonly property var cone: pickedCones.length === 1 ? pickedCones[0] : null
+    readonly property string kind: cone ? "cone" : pickedCones.length > 1 ? "cones"
+                                   : el ? "element" : many.length > 1 ? "many" : TrackStore.selectedId
+
+    function elementName(id) {
+        const e = TrackStore.element(id)
+        return e ? Elements.NAMES[e.type] : ""
+    }
     readonly property var shared: Selection.sharedProps(many)
     // Changes only when the selection or the set of shared settings changes, so fields are not rebuilt while typing.
     readonly property string sharedKey: many.map(e => e.id).join(",") + ":" + shared.map(s => s.def.key).join(",")
@@ -39,7 +48,9 @@ ScrollView {
         spacing: 8
 
         Label {
-            text: panel.kind === "element" ? Elements.NAMES[panel.el.type]
+            text: panel.kind === "cone" ? qsTr("Cone %1 of %2").arg(panel.cone.index + 1).arg(panel.placed.length)
+                  : panel.kind === "cones" ? qsTr("%1 cones selected").arg(panel.pickedCones.length)
+                  : panel.kind === "element" ? Elements.NAMES[panel.el.type]
                   : panel.kind === "many" ? qsTr("%1 elements selected").arg(panel.many.length)
                   : panel.kind === "ruler" ? qsTr("Ruler")
                   : panel.kind === "origin" ? qsTr("Origin target")
@@ -153,6 +164,27 @@ ScrollView {
             visible: panel.kind === "direction" && TrackStore.frame !== null
             text: TrackStore.frame ? qsTr("From Origin: %1").arg(Units.format(TrackStore.frame.distance, Settings.units)) : ""
             color: "#b0b0b0"
+        }
+
+        Label {
+            visible: panel.kind === "cone"
+            text: !panel.cone ? "" : panel.cone.element === null ? qsTr("Added by hand")
+                  : qsTr("From %1 %2").arg(panel.elementName(panel.cone.element)).arg(panel.cone.element)
+            color: "#b0b0b0"
+        }
+        PropField {
+            readonly property var types: panel.pickedCones.map(c => c.type)
+            visible: panel.kind === "cone" || panel.kind === "cones"
+            def: ({ key: "coneType", label: qsTr("Type"), kind: "choice", choices: ["standing", "leaning"],
+                    labels: [qsTr("Standing"), qsTr("Leaning")] })
+            mixed: types.some(t => t !== types[0])
+            value: types.length > 0 ? types[0] : ""
+            onEdited: (v) => TrackStore.setConeTypes(v)
+        }
+        Button {
+            visible: panel.kind === "cone" || panel.kind === "cones"
+            text: panel.kind === "cones" ? qsTr("Delete %1 cones").arg(panel.pickedCones.length) : qsTr("Delete cone")
+            onClicked: TrackStore.deleteSelected()
         }
     }
 }
