@@ -1,6 +1,7 @@
 #include "Settings.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QSettings>
 #include <utility>
 
@@ -18,6 +19,19 @@ bool samePath(const QString &a, const QString &b)
                                                                  Qt::CaseInsensitive) == 0;
 }
 
+double carSize(double metres)
+{
+    return qBound(Settings::minCarSize, metres, Settings::maxCarSize);
+}
+
+// A number from the ini, or `fallback` when the stored text is not one.
+double storedNumber(const QSettings &ini, const QString &key, double fallback)
+{
+    bool ok = false;
+    const double value = ini.value(key).toDouble(&ok);
+    return ok ? value : fallback;
+}
+
 } // namespace
 
 Settings::Settings(QObject *parent) : QObject(parent), m_units(defaultUnits())
@@ -27,6 +41,10 @@ Settings::Settings(QObject *parent) : QObject(parent), m_units(defaultUnits())
     if (unitChoices().contains(stored))
         m_units = stored;
     m_recent = ini.value(QStringLiteral("recentFiles")).toStringList();
+    m_conesOwned = qBound(0, int(storedNumber(ini, QStringLiteral("conesOwned"), 0)), maxConesOwned);
+    m_carLength = carSize(storedNumber(ini, QStringLiteral("carLength"), defaultCarLength));
+    m_carWidth = carSize(storedNumber(ini, QStringLiteral("carWidth"), defaultCarWidth));
+    m_carImage = ini.value(QStringLiteral("carImage")).toString();
 }
 
 QStringList Settings::unitChoices()
@@ -71,6 +89,51 @@ void Settings::clearRecentFiles()
     setRecent({});
 }
 
+void Settings::setConesOwned(int count)
+{
+    count = qBound(0, count, maxConesOwned);
+    if (count == m_conesOwned)
+        return;
+    m_conesOwned = count;
+    emit conesOwnedChanged();
+    save();
+}
+
+void Settings::setCarLength(double metres)
+{
+    metres = carSize(metres);
+    if (qFuzzyCompare(metres, m_carLength))
+        return;
+    m_carLength = metres;
+    emit carLengthChanged();
+    save();
+}
+
+void Settings::setCarWidth(double metres)
+{
+    metres = carSize(metres);
+    if (qFuzzyCompare(metres, m_carWidth))
+        return;
+    m_carWidth = metres;
+    emit carWidthChanged();
+    save();
+}
+
+void Settings::setCarImage(const QString &path)
+{
+    const QString native = QDir::toNativeSeparators(path);
+    if (native == m_carImage)
+        return;
+    m_carImage = native;
+    emit carImageChanged();
+    save();
+}
+
+bool Settings::carImageFound() const
+{
+    return !m_carImage.isEmpty() && QFileInfo(m_carImage).isFile();
+}
+
 void Settings::setRecent(const QStringList &list)
 {
     if (list == m_recent)
@@ -85,6 +148,10 @@ void Settings::save()
     QSettings ini = openIni();
     ini.setValue(QStringLiteral("units"), m_units);
     ini.setValue(QStringLiteral("recentFiles"), m_recent);
+    ini.setValue(QStringLiteral("conesOwned"), m_conesOwned);
+    ini.setValue(QStringLiteral("carLength"), m_carLength);
+    ini.setValue(QStringLiteral("carWidth"), m_carWidth);
+    ini.setValue(QStringLiteral("carImage"), m_carImage);
     ini.sync();
     if (ini.status() != QSettings::NoError)
         emit saveFailed(tr("Could not save your preferences to %1. They apply until Conestructor closes.")

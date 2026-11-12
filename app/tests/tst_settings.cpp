@@ -77,6 +77,86 @@ private slots:
         QCOMPARE(changed.count(), 0);
     }
 
+    void conePreferencesStartEmpty()
+    {
+        Settings s;
+        QCOMPARE(s.conesOwned(), 0);
+        QCOMPARE(s.carLength(), 2.9);
+        QCOMPARE(s.carWidth(), 1.4);
+        QCOMPARE(s.carImage(), QString());
+        QVERIFY(!s.carImageFound());
+    }
+
+    void conePreferencesSurviveARestart()
+    {
+        const QString image = dir.filePath(QStringLiteral("car.png"));
+        {
+            Settings s;
+            QSignalSpy owned(&s, &Settings::conesOwnedChanged);
+            QSignalSpy length(&s, &Settings::carLengthChanged);
+            QSignalSpy width(&s, &Settings::carWidthChanged);
+            QSignalSpy picture(&s, &Settings::carImageChanged);
+            s.setConesOwned(150);
+            s.setCarLength(3.1);
+            s.setCarWidth(1.5);
+            s.setCarImage(image);
+            QCOMPARE(owned.count(), 1);
+            QCOMPARE(length.count(), 1);
+            QCOMPARE(width.count(), 1);
+            QCOMPARE(picture.count(), 1);
+            s.setConesOwned(150);
+            QCOMPARE(owned.count(), 1);
+        }
+        Settings again;
+        QCOMPARE(again.conesOwned(), 150);
+        QCOMPARE(again.carLength(), 3.1);
+        QCOMPARE(again.carWidth(), 1.5);
+        QCOMPARE(again.carImage(), QDir::toNativeSeparators(image));
+    }
+
+    void conePreferencesKeepWithinTheirLimits()
+    {
+        Settings s;
+        s.setConesOwned(-5);
+        QCOMPARE(s.conesOwned(), 0);
+        s.setConesOwned(20000);
+        QCOMPARE(s.conesOwned(), 9999);
+        s.setCarLength(0.1);
+        QCOMPARE(s.carLength(), 0.5);
+        s.setCarWidth(50);
+        QCOMPARE(s.carWidth(), 10.0);
+    }
+
+    void badConePreferencesInTheFileFallBack()
+    {
+        {
+            QSettings settings = ini();
+            settings.setValue("conesOwned", "lots");
+            settings.setValue("carLength", "long");
+            settings.setValue("carWidth", 99);
+            settings.sync();
+        }
+        Settings s;
+        QCOMPARE(s.conesOwned(), 0);
+        QCOMPARE(s.carLength(), 2.9);
+        QCOMPARE(s.carWidth(), 10.0);
+    }
+
+    void theCarImageIsFoundOnlyWhenItExists()
+    {
+        const QString image = dir.filePath(QStringLiteral("found.png"));
+        Settings s;
+        s.setCarImage(image);
+        QVERIFY(!s.carImageFound());
+        QFile file(image);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("png");
+        file.close();
+        QVERIFY(s.carImageFound());
+        s.setCarImage(QString());
+        QVERIFY(!s.carImageFound());
+    }
+
     void aBadValueInTheFileFallsBackToTheDefault()
     {
         {
