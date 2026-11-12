@@ -72,6 +72,13 @@ Rectangle {
             const p = mapToItem(tile.canvas, mouse.x, mouse.y)
             tile.canvas.updatePlacing(p.x, p.y, (mouse.modifiers & Qt.ControlModifier) !== 0)
         }
+        // The system took the mouse away mid-drag: the tile goes back, and its ghost with it.
+        onCanceled: {
+            if (dragging) {
+                dragging = false
+                tile.canvas.cancelPlacing()
+            }
+        }
         onReleased: (mouse) => {
             if (!dragging) {
                 tile.canvas.clickTile(tile.kind)

@@ -33,6 +33,15 @@ Rectangle {
         }
     }
 
+    // Asked for again while open ("Type its length" on the coach card): take the focus back.
+    Connections {
+        target: box.canvas
+        function onLengthBoxAsksChanged() {
+            if (box.visible)
+                input.forceActiveFocus()
+        }
+    }
+
     function apply() {
         const metres = Units.parse(input.text, Settings.units)
         if (isNaN(metres) || !(metres > 0)) {

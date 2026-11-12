@@ -63,21 +63,22 @@ ApplicationWindow {
             then()
     }
 
-    // Where Save As starts: beside the open track, with its name filled in. An Untitled track starts wherever the
-    // dialog was last (null).
+    // Where Save As starts: beside the open track with its name filled in; an Untitled track in the last folder used,
+    // named Untitled.
     function saveAsStart() {
-        if (TrackStore.filePath === "")
-            return null
+        if (TrackStore.filePath === "") {
+            const folder = saveDialog.currentFolder.toString()
+            return { folder: saveDialog.currentFolder,
+                     file: folder + (folder.endsWith("/") ? "" : "/") + qsTr("Untitled") + ".cone" }
+        }
         return { folder: TrackFile.folderUrl(TrackStore.filePath), file: TrackFile.fileUrl(TrackStore.filePath) }
     }
 
     function saveAs(then) {
         saveDialog.afterSave = then || null
         const start = saveAsStart()
-        if (start) {
-            saveDialog.currentFolder = start.folder
-            saveDialog.selectedFile = start.file
-        }
+        saveDialog.currentFolder = start.folder
+        saveDialog.selectedFile = start.file
         saveDialog.open()
     }
 

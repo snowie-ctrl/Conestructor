@@ -1669,7 +1669,11 @@ private slots:
         QVERIFY(w.load(true));
         QVariant start;
         QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
-        QVERIFY(isNull(start));
+        // Minor 3: an Untitled track starts in the last folder with the name Untitled, not the last track's file name.
+        const QVariantMap untitled = plain(start).toMap();
+        QVERIFY(untitled.value("file").toUrl().toString().endsWith(QStringLiteral("/Untitled.cone")));
+        QCOMPARE(untitled.value("file").toUrl().adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash),
+                 untitled.value("folder").toUrl().adjusted(QUrl::StripTrailingSlash));
         const QString path = dir.filePath(QStringLiteral("Duck pond.cone"));
         w.store->setProperty("filePath", path);
         QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
@@ -2174,6 +2178,107 @@ private slots:
         settings->setProperty("carImage", QString());
         settings->setProperty("carLength", 2.9);
         settings->setProperty("units", units);
+    }
+
+    // Part 3's minor 2: "Type its length" brings the focus back to an open length box; Esc on the canvas closes it.
+    void theLengthBoxComesBackToFocus()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QMetaObject::invokeMethod(w.window, "useBlueprint");
+        w.clickItem(w.tile(QStringLiteral("ruler")));
+        w.click({ 300, 400 });
+        w.click({ 500, 400 });
+        QQuickItem *box = w.named(QStringLiteral("rulerLengthBox"));
+        QTRY_VERIFY(box->isVisible());
+        QQuickItem *input = textBox(box);
+        QTRY_VERIFY(input->hasActiveFocus());
+        w.click({ 200, 600 });                                   // the canvas takes the focus; the box stays open
+        QVERIFY(box->isVisible());
+        QVERIFY(!input->hasActiveFocus());
+        QMetaObject::invokeMethod(w.canvas, "openLengthBox");    // the coach card's "Type its length"
+        QTRY_VERIFY(input->hasActiveFocus());
+        w.click({ 200, 600 });
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QTRY_VERIFY(!box->isVisible());
+        QCOMPARE(w.track().value("ruler").toMap().value("realLength").toDouble(), 0.0);
+    }
+
+    // Part 3's minor 4: a tile in hand hides its ghost while the mouse is off the canvas, and a tile drag the system
+    // cancels drops it.
+    void aGhostDoesNotOutstayTheMouse()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QQuickItem *tile = w.tile(QStringLiteral("straight"));
+        w.clickItem(tile);
+        QTest::mouseMove(w.window, w.scene({ 300, 300 }));
+        QVERIFY(!isNull(w.canvas->property("ghost")));
+        QTest::mouseMove(w.window, tile->mapToScene(QPointF(tile->width() / 2, tile->height() + 6)).toPoint());
+        QTRY_VERIFY(isNull(w.canvas->property("ghost")));
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("straight"));
+        QTest::mouseMove(w.window, w.scene({ 320, 300 }));
+        QTRY_VERIFY(!isNull(w.canvas->property("ghost")));
+        QTest::keyClick(w.window, Qt::Key_Escape);
+
+        QQuickItem *area = nullptr;
+        for (QQuickItem *item : allItems(tile))
+            if (QByteArray(item->metaObject()->className()).contains("MouseArea"))
+                area = item;
+        QVERIFY(area);
+        const QPoint from = tile->mapToScene(QPointF(tile->width() / 2, tile->height() / 2)).toPoint();
+        QTest::mousePress(w.window, Qt::LeftButton, {}, from);
+        QTest::mouseMove(w.window, from - QPoint(40, 0));
+        QTest::mouseMove(w.window, w.scene({ 300, 300 }));
+        QCOMPARE(w.canvas->property("placingBy").toString(), QStringLiteral("drag"));
+        area->ungrabMouse();                                     // the system takes the mouse away
+        QCOMPARE(w.canvas->property("placingKind").toString(), QString());
+        QVERIFY(isNull(w.canvas->property("ghost")));
+        QTest::mouseRelease(w.window, Qt::LeftButton, {}, w.scene({ 300, 300 }));
+        QCOMPARE(w.store->property("elementCount").toInt(), 4);
+    }
+
+    // Part 3's minor 8: a line is never driven, so its right-click menu has no Reverse direction.
+    void aLineHasNoReverse()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        w.run(QStringLiteral("add"), { { "type", "line" }, { "x", 115.0 }, { "y", 66.0 } });
+        QObject *menu = w.window->findChild<QObject *>(QStringLiteral("elementMenu"));
+        w.click(w.screen(115, 66), Qt::RightButton);
+        QTRY_VERIFY(menu->property("opened").toBool());
+        QQuickItem *reverse = w.named(QStringLiteral("reverseItem"));
+        QVERIFY(reverse);
+        QVERIFY(!reverse->isVisible());
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->property("opened").toBool());
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        w.click(w.screen(e1.value("x").toDouble(), e1.value("y").toDouble()), Qt::RightButton);
+        QTRY_VERIFY(menu->property("opened").toBool());
+        QVERIFY(reverse->isVisible());
+        QTest::keyClick(w.window, Qt::Key_Escape);
+    }
+
+    // Part 3's minor 9: a line's cone dots are drawn: just off the line, a dot is brighter than the gap beside it.
+    void aLinesConeDotsAreDrawn()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        w.run(QStringLiteral("add"), { { "type", "line" }, { "x", 115.0 }, { "y", 66.0 } });
+        const QVariantList dots = plain(w.view(QStringLiteral("e5"))->property("dots")).toList();
+        QCOMPARE(dots.size(), 8);
+        const QImage image = w.window->grabWindow();
+        QVERIFY(!image.isNull());
+        const qreal dpr = image.devicePixelRatio();
+        auto shade = [&](QPointF photo) {
+            const QPointF s = w.canvas->mapToScene(w.screen(photo.x() * w.mpp(), photo.y() * w.mpp())) + QPointF(0, 2);
+            return qGray(image.pixelColor((s * dpr).toPoint()).rgb());
+        };
+        for (int i = 0; i + 1 < dots.size(); ++i) {
+            const QPointF a = plain(dots[i]).toList().value(0).toPointF();
+            const QPointF b = plain(dots[i + 1]).toList().value(0).toPointF();
+            QVERIFY2(shade(a) > shade((a + b) / 2) + 40, qPrintable(QStringLiteral("dot %1").arg(i)));
+        }
     }
 };
 

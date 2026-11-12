@@ -45,6 +45,7 @@ Item {
     property var placingPoint: null   // the photo pixel under the mouse while placing the ruler or a target
     property var rulerFirst: null     // the ruler's first end, once clicked
     property bool lengthBoxOpen: false
+    property int lengthBoxAsks: 0     // goes up each time the length box is asked for: an open box takes the focus back
     // A track piece in hand is dropped when setup comes undone (the track tiles lock again).
     readonly property bool setupDone: Setup.status(TrackStore.track).done
     onSetupDoneChanged: if (!setupDone && Elements.TYPES.indexOf(placingKind) >= 0) cancelPlacing()
@@ -263,8 +264,7 @@ Item {
         const fold = Elements.foldAdvice(el, m => Units.format(m, Settings.units))
         if (fold !== "")
             lines.push(fold)
-        return lines.join("
-")
+        return lines.join("\n")
     }
 
     // A tile dragged onto the canvas.
@@ -322,6 +322,7 @@ Item {
 
     function openLengthBox() {
         lengthBoxOpen = true
+        lengthBoxAsks += 1
     }
 
     function insideCanvas(sx, sy) {
@@ -646,9 +647,21 @@ Item {
         box = null
     }
 
+    // The system took the mouse away mid-gesture: end it as a release would, without its click.
+    function cancelGesture() {
+        if (mode !== "" && mode !== "pan" && mode !== "box")
+            TrackStore.seal()
+        mode = ""
+        press = null
+        box = null
+    }
+
     Keys.onPressed: (e) => {
         if (e.key === Qt.Key_Escape && placingBy !== "") {
             cancelPlacing()
+            e.accepted = true
+        } else if (e.key === Qt.Key_Escape && lengthBoxOpen) {
+            lengthBoxOpen = false           // as the box's own Esc: the length stays unset
             e.accepted = true
         }
         if (e.key === Qt.Key_Space && !e.isAutoRepeat) {
@@ -859,7 +872,12 @@ Item {
         onExited: {
             canvas.hover = null
             canvas.hoverNode = null
+            if (canvas.placingBy === "click") {
+                canvas.ghost = null             // it comes back when the mouse does
+                canvas.placingPoint = null
+            }
         }
+        onCanceled: canvas.cancelGesture()
         onWheel: (w) => canvas.zoomBy(Math.pow(1.0015, w.angleDelta.y), w.x, w.y)
     }
 
@@ -868,7 +886,15 @@ Item {
         objectName: "elementMenu"
         MenuItem { text: qsTr("Duplicate"); enabled: !TrackStore.locked; onTriggered: TrackStore.duplicateSelected() }
         MenuItem { text: qsTr("Delete"); enabled: !TrackStore.locked; onTriggered: TrackStore.deleteSelected() }
-        MenuItem { text: qsTr("Reverse direction"); enabled: !TrackStore.locked; onTriggered: TrackStore.reverseSelected() }
+        MenuItem {
+            objectName: "reverseItem"
+            text: qsTr("Reverse direction")
+            // A line is never driven: there is nothing to reverse.
+            visible: TrackStore.selectedElements.some(e => e.type !== "line")
+            height: visible ? implicitHeight : 0
+            enabled: !TrackStore.locked
+            onTriggered: TrackStore.reverseSelected()
+        }
     }
 
     Menu {
