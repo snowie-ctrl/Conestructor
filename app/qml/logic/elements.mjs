@@ -5,6 +5,7 @@
 // cone code is unchanged. Element objects: { id, type, x, y, rotation, props, joins: { A, B } } (see commands.mjs).
 import * as Rows from "./conerows.mjs"
 import { FOOT } from "./units.mjs"
+import * as Density from "./density.mjs"
 
 export const TYPES = ["straight", "slalom", "chicane", "turn", "line"]
 export const NAMES = { straight: "Straight", slalom: "Slalom", chicane: "Chicane", turn: "Turn", line: "Line" }
@@ -21,12 +22,15 @@ const WIDTH = { key: "trackWidth", label: "Track width", kind: "length", min: 1,
 const LEAD_IN = { key: "leadIn", label: "Lead-in", kind: "length", min: 0, max: 100 }
 const LEAD_OUT = { key: "leadOut", label: "Lead-out", kind: "length", min: 0, max: 100 }
 const SIDES = { kind: "choice", choices: ["left", "right"], labels: ["Left", "Right"] }
+// How densely an element's cones are placed: 0 follows the track's notch, 1 to 5 is its own (density.mjs).
+const DENSITY = { key: "density", label: "Cone density", kind: "notch", min: 0, max: 5 }
+const OUTSIDE = { key: "outsideCones", label: "Outside cones", kind: "choice", choices: ["off", "on"], labels: ["Off", "On"] }
 
 // Physical limits only. The rulebook is not applied to elements: people design however they like (part 3).
 export const PROPS = {
     straight: [
         { key: "length", label: "Length", kind: "length", min: 1, max: 200 },
-        WIDTH
+        WIDTH, DENSITY
     ],
     slalom: [
         LEAD_IN, LEAD_OUT,
@@ -34,14 +38,14 @@ export const PROPS = {
         { key: "coneSpacing", label: "Cone spacing", kind: "length", min: 2, max: 40 },
         { key: "weaveOffset", label: "Weave offset", kind: "length", min: 0, max: 10 },
         Object.assign({ key: "firstTurn", label: "First turn" }, SIDES),
-        WIDTH
+        WIDTH, DENSITY
     ],
     chicane: [
         LEAD_IN, LEAD_OUT,
         { key: "shiftLength", label: "Shift length", kind: "length", min: 1, max: 100 },
         { key: "shift", label: "Sideways shift", kind: "length", min: 0, max: 40 },
         Object.assign({ key: "direction", label: "Direction" }, SIDES),
-        WIDTH
+        WIDTH, DENSITY
     ],
     turn: [
         LEAD_IN, LEAD_OUT,
@@ -52,7 +56,7 @@ export const PROPS = {
         { key: "exitRadius", label: "Exit radius", kind: "length", min: 1, max: 100,
           showWhen: { key: "radiusType", value: "changing" } },
         Object.assign({ key: "direction", label: "Direction" }, SIDES),
-        WIDTH
+        OUTSIDE, WIDTH, DENSITY
     ],
     // A line is not driven: no track width, no leads. Its spacing is its own setting, never shared with a slalom's.
     line: [
@@ -62,11 +66,12 @@ export const PROPS = {
 }
 
 const DEFAULTS = {
-    straight: { length: 20, trackWidth: 4 },
-    slalom: { leadIn: 6, leadOut: 6, coneCount: 4, coneSpacing: 10, weaveOffset: 1.5, firstTurn: "left", trackWidth: 4 },
-    chicane: { leadIn: 6, leadOut: 6, shiftLength: 12, shift: 6, direction: "left", trackWidth: 4 },
+    straight: { length: 20, trackWidth: 4, density: 0 },
+    slalom: { leadIn: 6, leadOut: 6, coneCount: 4, coneSpacing: 10, weaveOffset: 1.5, firstTurn: "left", trackWidth: 4,
+              density: 0 },
+    chicane: { leadIn: 6, leadOut: 6, shiftLength: 12, shift: 6, direction: "left", trackWidth: 4, density: 0 },
     turn: { leadIn: 6, leadOut: 6, angle: 180, radius: 6, radiusType: "constant", exitRadius: 10, direction: "right",
-            trackWidth: 4 },
+            outsideCones: "off", trackWidth: 4, density: 0 },
     line: { length: 20, spacing: 3 }
 }
 
@@ -86,7 +91,7 @@ export function clamp(def, value) {
     let v = Number(value)
     if (!isFinite(v))
         return { value: def.min, clamped: true }
-    if (def.kind === "count")
+    if (def.kind === "count" || def.kind === "notch")
         v = Math.round(v)
     if (v < def.min)
         return { value: def.min, clamped: true }
@@ -117,17 +122,18 @@ const LEAN_OFFSET_FT = (10.5 / 2 + 18 / 2) / 12   // half a standing cone's base
 const SLALOM_SAMPLES = 16
 const CURVE_SAMPLES = 60
 const TURN_SAMPLES_PER_DEGREE = 3
+const OUTSIDE_MAX_FT = 5 / FOOT          // turn outside cones: at most 5 m apart on notch 3
 
-function straight(p) {
+function straight(p, f) {
     const half = p.length / 2
     return {
         path: [{ x: -half, y: 0 }, { x: half, y: 0 }],
         ends: { A: { x: -half, y: 0, heading: 180 }, B: { x: half, y: 0, heading: 0 } },
-        cones: Rows.straightRow(-half, 0, 0, p.length, p.trackWidth / 2, FOOT, LEAD_MIN_FT, LEAD_MAX_FT)
+        cones: Rows.straightRow(-half, 0, 0, p.length, p.trackWidth / 2, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f)
     }
 }
 
-function slalom(p) {
+function slalom(p, f) {
     const total = p.leadIn + (p.coneCount + 1) * p.coneSpacing + p.leadOut
     const half = total / 2
     const weaveEnd = -half + p.leadIn + (p.coneCount + 1) * p.coneSpacing
@@ -154,7 +160,7 @@ function slalom(p) {
     // Cones: lead-in pairs, a standing cone at each apex with a pointer cone just inside it, lead-out pairs.
     const halfWidth = p.trackWidth / 2
     const lean = LEAN_OFFSET_FT * FOOT
-    let cones = Rows.straightRow(-half, 0, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT)
+    let cones = Rows.straightRow(-half, 0, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f)
     sign = p.firstTurn === "left" ? -1 : 1
     for (let i = 0; i < p.coneCount; i++) {
         const apexX = p.leadIn + (i + 1) * p.coneSpacing - half
@@ -165,12 +171,12 @@ function slalom(p) {
         cones.push({ x: apexX, y: apexY - sign * lean, heading: Math.atan2(sign, 0) * 180 / Math.PI, type: "leaning" })
         sign = -sign
     }
-    cones = cones.concat(Rows.straightRow(weaveEnd, 0, 0, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT))
+    cones = cones.concat(Rows.straightRow(weaveEnd, 0, 0, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f))
 
     return { path: path, ends: { A: { x: -half, y: 0, heading: 180 }, B: { x: half, y: 0, heading: 0 } }, cones: cones }
 }
 
-function chicane(p) {
+function chicane(p, f) {
     const total = p.leadIn + p.shiftLength + p.leadOut
     const half = total / 2
     const bendRight = p.direction !== "left"
@@ -205,15 +211,15 @@ function chicane(p) {
 
     // Cones: entry pairs, leaning cones on the outside of each half of the S, exit pairs.
     const halfWidth = p.trackWidth / 2
-    let cones = Rows.straightRow(-half, entryY, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT)
+    let cones = Rows.straightRow(-half, entryY, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f)
     const bendSign = bendRight ? -1 : 1
-    for (const q of Rows.sampleInterior(curve, 3, 6, FOOT)) {
+    for (const q of Rows.sampleInterior(curve, 3, 6 * f, FOOT)) {
         const side = q.arcFraction < 0.5 ? bendSign : -bendSign
         const outside = q.heading * Math.PI / 180 + (90 * side) * Math.PI / 180
         cones.push({ x: q.x + Math.cos(outside) * halfWidth, y: q.y + Math.sin(outside) * halfWidth,
                      heading: q.heading, type: "leaning" })
     }
-    cones = cones.concat(Rows.straightRow(p3.x, exitY, 0, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT))
+    cones = cones.concat(Rows.straightRow(p3.x, exitY, 0, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f))
 
     return { path: path, ends: { A: { x: -half, y: entryY, heading: 180 }, B: { x: half, y: exitY, heading: 0 } },
              cones: cones }
@@ -225,7 +231,7 @@ function radiusAt(p, thetaDeg) {
     return p.radius + (p.exitRadius - p.radius) * (thetaDeg / p.angle)
 }
 
-function turn(p) {
+function turn(p, f) {
     const turnSign = p.direction === "right" ? 1 : -1
     const steps = Math.max(6, Math.round(Math.abs(p.angle) * TURN_SAMPLES_PER_DEGREE))
     const dTheta = p.angle / steps
@@ -260,16 +266,29 @@ function turn(p) {
     const path = raw.map(q => ({ x: q.x - cx, y: q.y - cy }))
     const rel = arc.map(q => ({ x: q.x - cx, y: q.y - cy, heading: q.heading }))
 
-    // Cones: entry pairs, leaning cones on the inside of the arc, exit pairs.
+    // Cones: entry pairs; leaning cones on the inside of the arc and, with Outside cones on, standing cones on its outer
+    // edge, in order along the arc; exit pairs.
     const halfWidth = p.trackWidth / 2
-    let cones = Rows.straightRow(path[0].x, path[0].y, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT)
-    for (const q of Rows.sampleInterior(rel, 5, 8, FOOT)) {
+    let cones = Rows.straightRow(path[0].x, path[0].y, 0, p.leadIn, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f)
+    const interior = []
+    for (const q of Rows.sampleInterior(rel, 5, 8 * f, FOOT)) {
         const inside = q.heading * Math.PI / 180 - (-90 * turnSign) * Math.PI / 180
-        cones.push({ x: q.x + Math.cos(inside) * halfWidth, y: q.y + Math.sin(inside) * halfWidth,
-                     heading: q.heading, type: "leaning" })
+        interior.push({ at: q.arcFraction, cone: { x: q.x + Math.cos(inside) * halfWidth, y: q.y + Math.sin(inside) * halfWidth,
+                                                   heading: q.heading, type: "leaning" } })
     }
+    if (p.outsideCones === "on") {
+        // The outer edge itself is sampled, so the gaps along it (not along the centreline) stay within the spacing.
+        const edge = rel.map(q => {
+            const outside = q.heading * Math.PI / 180 - (90 * turnSign) * Math.PI / 180
+            return { x: q.x + Math.cos(outside) * halfWidth, y: q.y + Math.sin(outside) * halfWidth, heading: q.heading }
+        })
+        for (const q of Rows.sampleInterior(edge, OUTSIDE_MAX_FT * f, OUTSIDE_MAX_FT * f, FOOT))
+            interior.push({ at: q.arcFraction, cone: { x: q.x, y: q.y, heading: 0, type: "standing" } })
+    }
+    interior.sort((a, b) => a.at - b.at)
+    cones = cones.concat(interior.map(i => i.cone))
     const last = rel[rel.length - 1]
-    cones = cones.concat(Rows.straightRow(last.x, last.y, exitRad, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT))
+    cones = cones.concat(Rows.straightRow(last.x, last.y, exitRad, p.leadOut, halfWidth, FOOT, LEAD_MIN_FT, LEAD_MAX_FT * f))
 
     return {
         path: path,
@@ -314,12 +333,15 @@ export function tightestRadius(path) {
 const BUILD = { straight: straight, slalom: slalom, chicane: chicane, turn: turn, line: line }
 const cache = new Map()
 
-// The element's centreline, ends and cones in its own frame. Cached by settings; callers must not change the result.
-export function geometry(type, props) {
-    const key = type + JSON.stringify(props)
+// The element's centreline, ends and cones in its own frame, with the largest cone gaps multiplied by `factor` (1 when
+// left out: the centreline and ends do not depend on it). Cached by settings and factor; callers must not change the
+// result.
+export function geometry(type, props, factor) {
+    const f = factor > 0 ? factor : 1
+    const key = type + JSON.stringify(props) + "|" + f
     let g = cache.get(key)
     if (!g) {
-        g = BUILD[type](props)
+        g = BUILD[type](props, f)
         g.tightest = tightestRadius(g.path)
         if (cache.size > 500)
             cache.clear()
@@ -382,8 +404,10 @@ export function pathWorld(el) {
     return geometry(el.type, el.props).path.map(p => toWorld(el, p))
 }
 
-export function conesWorld(el) {
-    return geometry(el.type, el.props).cones.map(c => {
+// The element's cones in canvas metres, at its own notch or the track's (`trackNotch`, SAE standard when left out).
+export function conesWorld(el, trackNotch) {
+    const notch = Density.elementNotch(el, trackNotch === undefined ? Density.STANDARD : trackNotch)
+    return geometry(el.type, el.props, Density.factor(notch)).cones.map(c => {
         const w = toWorld(el, c)
         return { x: w.x, y: w.y, heading: el.rotation + c.heading, type: c.type }
     })

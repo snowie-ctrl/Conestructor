@@ -15,12 +15,12 @@ TestCase {
         return list.map(s => s.def.key).join(",")
     }
 
-    function test_aStraightAndATurnShareOnlyTheTrackWidth() {
-        compare(keys(Selection.sharedProps([el("e1", "straight"), el("e2", "turn")])), "trackWidth")
+    function test_aStraightAndATurnShareOnlyTheTrackWidthAndDensity() {
+        compare(keys(Selection.sharedProps([el("e1", "straight"), el("e2", "turn")])), "trackWidth,density")
     }
 
     function test_turnsAndChicanesShareLeadsAndDirection() {
-        compare(keys(Selection.sharedProps([el("e1", "turn"), el("e2", "chicane")])), "leadIn,leadOut,direction,trackWidth")
+        compare(keys(Selection.sharedProps([el("e1", "turn"), el("e2", "chicane")])), "leadIn,leadOut,direction,trackWidth,density")
     }
 
     function test_differentValuesAreMixed() {

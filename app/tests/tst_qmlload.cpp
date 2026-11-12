@@ -69,6 +69,28 @@ static QQuickItem *textBox(QQuickItem *field)
     return nullptr;
 }
 
+// Lays out the rows around `item` and scrolls the panel (or any Flickable) holding it until it is in view, as a person
+// would see it before clicking. Rows a Repeater has just made all sit at one spot until their layout's next polish, so
+// a click before it lands on whichever row was made last (part 4 put a second shared row under Track width).
+static void scrollIntoView(QQuickItem *item)
+{
+    QList<QQuickItem *> chain;
+    for (QQuickItem *p = item; p; p = p->parentItem())
+        chain.prepend(p);
+    for (QQuickItem *p : std::as_const(chain))
+        p->ensurePolished();
+    for (QQuickItem *p = item->parentItem(); p; p = p->parentItem()) {
+        if (!QByteArray(p->metaObject()->className()).contains("Flickable"))
+            continue;
+        QQuickItem *content = p->property("contentItem").value<QQuickItem *>();
+        const QPointF at = item->mapToItem(content, QPointF(0, 0));
+        const double top = p->property("contentY").toDouble();
+        if (at.y() < top || at.y() + item->height() > top + p->height())
+            p->setProperty("contentY", std::max(0.0, at.y() + item->height() - p->height()));
+        return;
+    }
+}
+
 // Whether a QML `var` property holds null (or nothing).
 static bool isNull(const QVariant &v)
 {
@@ -220,7 +242,7 @@ private slots:
         QCOMPARE(engine.rootObjects().size(), 1);
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Untitled"));
     }
 
     void theExampleTrackDrawsAndPlacesCones()
@@ -428,6 +450,7 @@ private slots:
             return nullptr;
         };
         auto click = [&](QQuickItem *item) {
+            scrollIntoView(item);
             QTest::mouseClick(window, Qt::LeftButton, {},
                               item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
         };
@@ -686,7 +709,7 @@ private slots:
         QObject *settings = engine.singletonInstance<QObject *>("Conestructor", "Settings");
         auto *photo = window->findChild<QQuickItem *>(QStringLiteral("photo"));
         QVERIFY(store && settings && photo);
-        const QString dash = QStringLiteral("Conestructor 0.4 \u2014 ");
+        const QString dash = QStringLiteral("Conestructor 0.5 \u2014 ");
 
         QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
         QCOMPARE(window->title(), dash + QStringLiteral("Untitled"));
@@ -793,7 +816,7 @@ private slots:
         QTRY_VERIFY(dialog->property("opened").toBool());
         click(QStringLiteral("Don't save"));
         QTRY_COMPARE(store->property("elementCount").toInt(), 0);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Untitled"));
 
         // Closing with changes asks too; Don't save closes.
         QMetaObject::invokeMethod(window, "useBlueprint");
@@ -825,7 +848,7 @@ private slots:
         QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
         QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, path));
         QCOMPARE(store->property("elementCount").toInt(), 4);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Start"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Start"));
     }
 
     // Unsaved changes are backed up; at the next start the backup is offered; Discard forgets it; Save removes it.
@@ -870,7 +893,7 @@ private slots:
             click(window, QStringLiteral("Restore"));
             QTRY_COMPARE(store->property("elementCount").toInt(), 4);
             QVERIFY(store->property("dirty").toBool());
-            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.4 \u2014 Untitled*"));
+            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Untitled*"));
             QVERIFY(!backup(engine).isEmpty());                      // kept until saved or closed normally
             const QString path = dir.filePath(QStringLiteral("Restored.cone"));
             QVariant ok;
@@ -1225,6 +1248,7 @@ private slots:
             QVERIFY(field);
             QTRY_VERIFY(field->property("mixed").toBool());
             QQuickItem *input = textBox(field);
+            scrollIntoView(input);
             QTest::mouseClick(window, Qt::LeftButton, {}, input->mapToScene(QPointF(input->width() / 2, input->height() / 2)).toPoint());
             QTest::keyClick(window, '1');
             QTest::keyClick(window, '2');

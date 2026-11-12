@@ -2,7 +2,10 @@
 // qml/PostProcessor.qml and qml/elements/ConeUtils.js at 2c79b60: cones per element, duplicates at joins removed.
 // Since part 2, joined chains are walked the way most of their elements point and separate chains are stitched by the
 // nearest start. Since part 3, cones on another element's driving surface are left out before duplicates are merged,
-// and line cones (walls) come after the course. Tests: tests/qml/tst_postprocess.qml and the port check (tests/qml/tst_portcheck.qml).
+// and line cones (walls) come after the course. Since part 4, cones are spaced by the track's density notch (or an
+// element's own), and a course cone beats a line cone at the same spot. Tests: tests/qml/tst_postprocess.qml and the
+// port check (tests/qml/tst_portcheck.qml).
+import * as Density from "./density.mjs"
 import * as Elements from "./elements.mjs"
 import * as Frame from "./frame.mjs"
 import { FOOT } from "./units.mjs"
@@ -37,9 +40,10 @@ export function check(track) {
     return null
 }
 
-// Each element's cones in canvas metres, in the element's own order (entry A to exit B), each naming its element.
-export function coneGroups(elements) {
-    return elements.map(el => ({ id: el.id, cones: Elements.conesWorld(el).map(c => Object.assign(c, { element: el.id })) }))
+// Each element's cones in canvas metres, in the element's own order (entry A to exit B), each naming its element, at
+// the element's own density notch or the track's.
+export function coneGroups(elements, trackNotch) {
+    return elements.map(el => ({ id: el.id, cones: Elements.conesWorld(el, trackNotch).map(c => Object.assign(c, { element: el.id })) }))
 }
 
 // A cone more than this far inside any element's band is on the driving surface and is left out.
@@ -98,6 +102,16 @@ export function dedupe(groups, epsilon) {
     groups.forEach((g, gi) => {
         g.cones = flat.filter((f, k) => f.group === gi && !removed[k]).map(f => f.cone)
     })
+}
+
+// The same groups with the course's before the lines', so a wall cone on a gate cone is the one de-duplication drops,
+// whichever element comes first in the list.
+export function courseFirst(groups, elements) {
+    const isLine = g => {
+        const el = elements.find(e => e.id === g.id)
+        return el && el.type === "line"
+    }
+    return groups.filter(g => !isLine(g)).concat(groups.filter(isLine))
 }
 
 function byId(elements, id) {
@@ -252,9 +266,9 @@ export function run(track) {
     if (error)
         return { error: error }
     const frame = Frame.makeFrame(track.targets.origin, track.targets.direction, track.photo.metresPerPixel)
-    const groups = coneGroups(track.elements)
+    const groups = coneGroups(track.elements, Density.trackNotch(track))
     removeOnTrack(groups, track.elements)
-    dedupe(groups, DEDUPE_METRES)
+    dedupe(courseFirst(groups, track.elements), DEDUPE_METRES)
     const course = stitch(buildChains(track.elements, groups))
     const ordered = appendLines(course, track.elements.filter(e => e.type === "line"), groups)
     const cones = []

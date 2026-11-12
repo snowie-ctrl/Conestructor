@@ -15,13 +15,14 @@ TestCase {
     }
 
     function test_defaultsMatchTheSpec() {
-        compare(JSON.stringify(Elements.defaults("straight")), JSON.stringify({ length: 20, trackWidth: 4 }))
+        compare(JSON.stringify(Elements.defaults("straight")), JSON.stringify({ length: 20, trackWidth: 4, density: 0 }))
         compare(JSON.stringify(Elements.defaults("slalom")), JSON.stringify(
-            { leadIn: 6, leadOut: 6, coneCount: 4, coneSpacing: 10, weaveOffset: 1.5, firstTurn: "left", trackWidth: 4 }))
+            { leadIn: 6, leadOut: 6, coneCount: 4, coneSpacing: 10, weaveOffset: 1.5, firstTurn: "left", trackWidth: 4, density: 0 }))
         compare(JSON.stringify(Elements.defaults("chicane")), JSON.stringify(
-            { leadIn: 6, leadOut: 6, shiftLength: 12, shift: 6, direction: "left", trackWidth: 4 }))
+            { leadIn: 6, leadOut: 6, shiftLength: 12, shift: 6, direction: "left", trackWidth: 4, density: 0 }))
         compare(JSON.stringify(Elements.defaults("turn")), JSON.stringify(
-            { leadIn: 6, leadOut: 6, angle: 180, radius: 6, radiusType: "constant", exitRadius: 10, direction: "right", trackWidth: 4 }))
+            { leadIn: 6, leadOut: 6, angle: 180, radius: 6, radiusType: "constant", exitRadius: 10, direction: "right", outsideCones: "off",
+              trackWidth: 4, density: 0 }))
         compare(Elements.TIPS.turn, "Turn: anything from a sweeper to a hairpin.")
     }
 
@@ -382,5 +383,112 @@ TestCase {
         compare(Elements.foldAdvice(typed("slalom", { coneSpacing: 2, weaveOffset: 3 }), metres),
                 "Folds in on itself: space the cones further apart or make the weave offset smaller, or the track narrower.")
         compare(Elements.foldAdvice(typed("turn"), metres), "")
+    }
+
+    function placed(type, props) {
+        return { id: "e1", type: type, x: 3, y: 4, rotation: 20, props: Object.assign(Elements.defaults(type), props || {}),
+                 joins: { A: null, B: null } }
+    }
+    function count(cones, type) {
+        return cones.filter(c => c.type === type).length
+    }
+
+    // Notch 3 is the spacing the app has always used (the port check pins the cones themselves).
+    function test_notchThreeIsTheDefault_data() {
+        return Elements.TYPES.map(t => ({ tag: t, type: t }))
+    }
+    function test_notchThreeIsTheDefault(row) {
+        const el = placed(row.type)
+        compare(JSON.stringify(Elements.conesWorld(el, 3)), JSON.stringify(Elements.conesWorld(el)))
+    }
+
+    // A 20 m straight: gate pairs at most 20, 15, 10, 7.5 or 5 m apart.
+    function test_eachNotchScalesTheGatePairs_data() {
+        return [{ tag: "Fewest", notch: 1, cones: 4 }, { tag: "Fewer", notch: 2, cones: 6 },
+                { tag: "SAE standard", notch: 3, cones: 6 }, { tag: "More", notch: 4, cones: 8 },
+                { tag: "Most", notch: 5, cones: 10 }]
+    }
+    function test_eachNotchScalesTheGatePairs(row) {
+        compare(Elements.conesWorld(placed("straight"), row.notch).length, row.cones)
+    }
+
+    // The default 180° turn of radius 6 m: inside cones at most 4.9, 2.4 or 1.2 m apart along the centreline.
+    function test_eachNotchScalesATurnsInsideCones() {
+        compare(count(Elements.conesWorld(placed("turn"), 1), "leaning"), 3)
+        compare(count(Elements.conesWorld(placed("turn"), 3), "leaning"), 7)
+        compare(count(Elements.conesWorld(placed("turn"), 5), "leaning"), 15)
+    }
+
+    function test_aChicaneGetsMoreConesOnAHigherNotch() {
+        verify(count(Elements.conesWorld(placed("chicane"), 5), "leaning") > count(Elements.conesWorld(placed("chicane"), 3), "leaning"))
+        verify(count(Elements.conesWorld(placed("chicane"), 1), "leaning") < count(Elements.conesWorld(placed("chicane"), 3), "leaning"))
+    }
+
+    function test_slalomApexesAndLinesIgnoreDensity() {
+        for (const notch of [1, 5]) {
+            compare(count(Elements.conesWorld(placed("slalom"), notch), "leaning"), 4)   // one pointer per apex
+            compare(Elements.conesWorld(placed("line"), notch).length, Elements.conesWorld(placed("line"), 3).length)
+        }
+    }
+
+    function test_anElementsOwnNotchBeatsTheTracks() {
+        compare(Elements.conesWorld(placed("straight", { density: 5 }), 1).length, 10)
+        compare(Elements.conesWorld(placed("straight", { density: 0 }), 1).length, 4)
+    }
+
+    function test_densityIsAWholeNotchFromNoneToFive() {
+        compare(Elements.clampProp("straight", "density", 2.4).value, 2)
+        compare(Elements.clampProp("turn", "density", 9).value, 5)
+        compare(Elements.clampProp("chicane", "density", -1).value, 0)
+        compare(Elements.defaults("slalom").density, 0)
+        verify(!("density" in Elements.defaults("line")))
+    }
+
+    // Outside cones: standing cones along the outer edge of the arc, at most 5 m apart on notch 3.
+    function test_outsideConesOnATurn() {
+        const off = Elements.conesWorld(placed("turn"))
+        const onEl = placed("turn", { outsideCones: "on" })
+        const on = Elements.conesWorld(onEl)
+        compare(Elements.defaults("turn").outsideCones, "off")
+        compare(count(on, "leaning"), count(off, "leaning"))
+        const added = on.filter(c => !off.some(o => Math.hypot(o.x - c.x, o.y - c.y) < 1e-9))
+        compare(added.length, 5)                        // a 25.1 m outer edge in gaps of at most 5 m
+        for (const c of added) {
+            compare(c.type, "standing")
+            fuzzyCompare(Elements.distanceToPath(onEl, c), 2, 0.01)    // on the band's edge
+        }
+        for (let i = 1; i < added.length; i++)
+            verify(Math.hypot(added[i].x - added[i - 1].x, added[i].y - added[i - 1].y) <= 5.0001)
+        // In order along the arc: the first outside cone comes before the last inside cone.
+        const firstOutside = on.findIndex(c => added.indexOf(c) >= 0)
+        const lastInside = on.map(c => c.type).lastIndexOf("leaning")
+        verify(firstOutside < lastInside)
+        verify(count(Elements.conesWorld(onEl, 5), "standing") > count(on, "standing"))
+    }
+
+    // Part 3's minor: a slalom or chicane folds just past its threshold (tightest curve below half the track width)
+    // and not at it. The threshold width is found by halving the range.
+    function foldsAtWidth(type, width) {
+        return Elements.folds({ type: type, props: Object.assign(Elements.defaults(type), { trackWidth: width }) })
+    }
+    function test_foldsJustPastTheThreshold_data() {
+        return [{ tag: "chicane", type: "chicane" }, { tag: "slalom", type: "slalom" }]
+    }
+    function test_foldsJustPastTheThreshold(row) {
+        let lo = 1
+        let hi = 20
+        verify(!foldsAtWidth(row.type, lo))
+        verify(foldsAtWidth(row.type, hi))
+        for (let i = 0; i < 40; i++) {
+            const mid = (lo + hi) / 2
+            if (foldsAtWidth(row.type, mid))
+                hi = mid
+            else
+                lo = mid
+        }
+        verify(!foldsAtWidth(row.type, lo - 0.01))
+        verify(foldsAtWidth(row.type, hi + 0.01))
+        const tightest = Elements.geometry(row.type, Object.assign(Elements.defaults(row.type), { trackWidth: hi })).tightest
+        fuzzyCompare(tightest, hi / 2, 0.01)
     }
 }

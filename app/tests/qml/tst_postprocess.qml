@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import "../../qml/logic/commands.mjs" as Commands
 import "../../qml/logic/postprocess.mjs" as Post
+import "../../qml/logic/elements.mjs" as Elements
 import "../../qml/logic/snapping.mjs" as Snapping
 import "../../qml/logic/demo.mjs" as Demo
 import "fixtures/sampletrack.mjs" as Sample
@@ -238,5 +239,47 @@ TestCase {
             Post.removeOnTrack(groups, t.elements)
             compare(total(groups), before)
         }
+    }
+
+    function test_theTracksNotchSetsTheGaps() {
+        const t = Demo.demoTrack()
+        const standard = Post.run(t).cones.length
+        t.density = 5
+        verify(Post.run(t).cones.length > standard)
+        t.density = 1
+        verify(Post.run(t).cones.length < standard)
+    }
+
+    function test_outsideConesAreKeptOnTheBandsEdge() {
+        const t = build(scale().concat(targets(), [["add", { type: "turn", x: 20, y: 20, props: { outsideCones: "on" } }]]))
+        compare(Post.run(t).cones.length, Elements.conesWorld(t.elements[0]).length)
+    }
+
+    // Part 3's minor: a folded turn loses exactly the cones on its driving surface (and keeps a cone near every other).
+    function test_aFoldedTurnLosesTheConesOnItsDrivingSurface() {
+        const t = build(scale().concat(targets(), [["add", { type: "turn", x: 20, y: 20, props: { angle: 90, radius: 1 } }]]))
+        const el = t.elements[0]
+        const limit = el.props.trackWidth / 2 - Post.ON_TRACK_METRES
+        const onSurface = c => Elements.distanceToPath(el, c) < limit
+        const all = Elements.conesWorld(el)
+        const kept = Post.run(t).canvasCones
+        verify(all.some(onSurface), "the fold puts cones on the driving surface")
+        verify(!kept.some(onSurface), "none of them is placed")
+        for (const c of all.filter(c => !onSurface(c)))
+            verify(kept.some(k => Math.hypot(k.x - c.x, k.y - c.y) < Post.DEDUPE_METRES), "a cone off the surface stays")
+    }
+
+    // Part 3's minor: a wall cone on a gate cone gives way to the gate cone, even when the wall comes first in the list.
+    function test_aWallConeOnAGateConeGivesWay() {
+        const t = build(scale().concat(targets(), [
+            ["add", { type: "line", x: 0, y: 3, props: { length: 4, spacing: 3 } }],    // e1: cones at x -2, 0, 2 on y 3
+            ["add", { type: "straight", x: 10, y: 5 }]                                 // e2: a gate cone at (0, 3)
+        ]))
+        const result = Post.run(t)
+        const atGate = result.canvasCones.filter(c => Math.hypot(c.x, c.y - 3) < 0.01)
+        compare(atGate.length, 1)
+        compare(atGate[0].element, "e2")
+        compare(result.canvasCones.filter(c => c.element === "e1").length, 2)
+        compare(result.canvasCones[result.canvasCones.length - 1].element, "e1")
     }
 }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Conestructor VERSION 0.4.0 LANGUAGES CXX)
+project(Conestructor VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,6 +58,7 @@ qt_add_qml_module(conestructor_core
         qml/logic/setup.mjs
         qml/logic/conefile.mjs
         qml/logic/nodes.mjs
+        qml/logic/density.mjs
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp
