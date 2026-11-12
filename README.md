@@ -1,9 +1,11 @@
 # Conestructor
 
-> **v1 in progress.** Parts 1 to 3 of 6 are done: the core canvas (metres underneath, zoom and pan, undo, units, cone
+> **v1 in progress.** Parts 1 to 4 of 6 are done: the core canvas (metres underneath, zoom and pan, undo, units, cone
 > preview); setup and track files (a setup checklist, `.cone` files with the photo inside, direction arrows, Reverse
-> direction, typed rotation, multi-select); and ease of use (a coach card through setup, click-to-place, gate nodes that
-> pivot and stretch, a fold warning, turns up to 360°, a line tool for walls). A full guide comes with v1.0.0.
+> direction, typed rotation, multi-select); ease of use (a coach card through setup, click-to-place, gate nodes that
+> pivot and stretch, a fold warning, turns up to 360°, a line tool for walls); and cones (a density slider with five
+> notches and per-element overrides, outside cones on turns, the cone count against the cones the team owns, touch-ups
+> of single cones after placing them, a true-size car outline). A full guide comes with v1.0.0.
 
 Conestructor is a desktop app for designing Formula SAE autocross tracks ahead of time. You lay track elements
 (straights, slaloms, chicanes, turns, and lines for walls) over a birdseye photo of the lot. A ruler sets the
