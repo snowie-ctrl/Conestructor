@@ -1,7 +1,9 @@
 import QtQuick
 import QtTest
 import "../../qml/logic/commands.mjs" as Commands
+import "../../qml/logic/demo.mjs" as Demo
 import "../../qml/logic/elements.mjs" as Elements
+import "../../qml/logic/touchups.mjs" as Touchups
 
 TestCase {
     name: "Commands"
@@ -471,5 +473,122 @@ TestCase {
         compare(s.undoLabel(), "Stretch Straight")
         compare(s.done.length, 1)
         compare(JSON.stringify(s.undo()), JSON.stringify(t0))
+    }
+
+    function locked() {
+        const t = Demo.demoTrack()
+        return Commands.run(new Commands.UndoStack(), t, "deleteCones", { indices: [0] })
+    }
+
+    function test_aNewTrackIsSAEStandardWithNoTouchUps() {
+        const t = Commands.emptyTrack()
+        compare(Object.keys(t).join(","), "photo,ruler,targets,elements,nextId,density,touchUps")
+        compare(t.density, 3)
+        compare(t.touchUps, null)
+        verify(!Commands.locked(t))
+    }
+
+    function test_settingTheDensity() {
+        const s = new Commands.UndoStack()
+        const t = Demo.demoTrack()
+        const after = Commands.run(s, t, "setDensity", { notch: 5 })
+        compare(after.density, 5)
+        compare(s.undoLabel(), "Change density")
+        compare(Commands.run(s, after, "setDensity", { notch: 9 }), after, "not a notch: refused")
+        compare(JSON.stringify(s.undo()), JSON.stringify(t))
+    }
+
+    function test_theFirstTouchUpFreezesAndLocks() {
+        const s = new Commands.UndoStack()
+        const t = Demo.demoTrack()
+        const after = Commands.run(s, t, "deleteCones", { indices: [0] })
+        verify(Commands.locked(after))
+        compare(after.touchUps.cones.length, after.touchUps.placed - 1)
+        compare(s.undoLabel(), "Delete cone")
+        compare(JSON.stringify(s.undo()), JSON.stringify(t), "undo unlocks exactly")
+    }
+
+    function test_eachTouchUpUndoesExactly_data() {
+        return [
+            { tag: "delete several", name: "deleteCones", args: { indices: [0, 1, 2] }, label: "Delete 3 cones" },
+            { tag: "move", name: "moveCone", args: { index: 1, x: 3, y: 4 }, label: "Move cone" },
+            { tag: "make leaning", name: "setConeType", args: { indices: [0], type: "leaning" }, label: "Make leaning" },
+            { tag: "turn", name: "pointCone", args: { index: 0, heading: 45 }, label: "Turn cone" },
+            { tag: "add", name: "addCone", args: { x: 3, y: 4 }, label: "Add cone" }
+        ]
+    }
+    function test_eachTouchUpUndoesExactly(row) {
+        const s = new Commands.UndoStack()
+        const before = locked()
+        const after = Commands.run(s, before, row.name, row.args)
+        verify(after !== before)
+        compare(s.undoLabel(), row.label)
+        compare(JSON.stringify(s.undo()), JSON.stringify(before))
+        compare(JSON.stringify(s.redo()), JSON.stringify(after))
+    }
+
+    function test_aTouchUpThatChangesNothingDoesNotLock() {
+        const t = Demo.demoTrack()
+        const first = Touchups.freeze(t).cones.findIndex(c => c.type === "standing")
+        compare(Commands.run(new Commands.UndoStack(), t, "setConeType", { indices: [first], type: "standing" }), t)
+    }
+
+    function test_noTouchUpsWithoutPlacedCones() {
+        const t = Commands.emptyTrack()
+        compare(Commands.run(new Commands.UndoStack(), t, "addCone", { x: 1, y: 1 }), t)
+    }
+
+    function test_clearingUnlocks() {
+        const s = new Commands.UndoStack()
+        const after = Commands.run(s, locked(), "clearTouchUps", {})
+        verify(!Commands.locked(after))
+        compare(s.undoLabel(), "Clear touch-ups")
+    }
+
+    // Every track command but the touch-ups, clearing them, a new photo and New is refused while touch-ups exist. Each
+    // row first changes an unlocked track (so the refusal means something), then leaves a locked one untouched.
+    function test_theLockRefusesTrackChanges_data() {
+        return [
+            { tag: "setRuler", args: { a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, realLength: 30 } },
+            { tag: "removeRuler", args: {}, unlockedRefuses: true },
+            { tag: "setTarget", args: { which: "origin", point: { x: 1, y: 1 } } },
+            { tag: "add", args: { type: "straight", x: 1, y: 1 } },
+            { tag: "place", args: { id: "e1", x: 1, y: 1, rotation: 0 } },
+            { tag: "setProp", args: { id: "e1", key: "trackWidth", value: 5 } },
+            { tag: "remove", args: { id: "e1" } },
+            { tag: "duplicate", args: { id: "e1" } },
+            { tag: "reverse", args: { ids: ["e1"] } },
+            { tag: "rotateChain", args: { id: "e1", rotation: 45 } },
+            { tag: "setProps", args: { ids: ["e1"], key: "trackWidth", value: 5 } },
+            { tag: "removeMany", args: { ids: ["e1"] } },
+            { tag: "duplicateMany", args: { ids: ["e1"] } },
+            { tag: "placeMany", args: { moves: [{ id: "e1", x: 1, y: 1, rotation: 0 }] } },
+            { tag: "stretch", args: { id: "e1", x: 1, y: 1, rotation: 0, key: "length", value: 30 } },
+            { tag: "setDensity", args: { notch: 5 } }
+        ]
+    }
+    function test_theLockRefusesTrackChanges(row) {
+        const open = Demo.demoTrack()
+        if (!row.unlockedRefuses)
+            verify(Commands.run(new Commands.UndoStack(), open, row.tag, row.args) !== open, "changes an unlocked track")
+        const t = locked()
+        const s = new Commands.UndoStack()
+        compare(Commands.run(s, t, row.tag, row.args), t)
+        verify(!s.canUndo())
+    }
+
+    function test_whatRunsWhileLocked() {
+        const t = locked()
+        verify(Commands.run(new Commands.UndoStack(), t, "setPhoto", { kind: "image", ref: 7 }) !== t)
+        verify(Commands.run(new Commands.UndoStack(), t, "moveCone", { index: 0, x: 1, y: 1 }) !== t)
+        compare(Commands.run(new Commands.UndoStack(), t, "newTrack", {}).touchUps, null)
+    }
+
+    // A command added later must say whether it runs while locked: every command is either in WHILE_LOCKED or in the
+    // refused list above.
+    function test_everyCommandIsCoveredByTheLock() {
+        const refused = test_theLockRefusesTrackChanges_data().map(r => r.tag)
+        for (const name of Commands.COMMAND_NAMES)
+            verify(Commands.WHILE_LOCKED.indexOf(name) >= 0 || refused.indexOf(name) >= 0, name)
     }
 }

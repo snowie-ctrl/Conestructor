@@ -176,7 +176,8 @@ function readDesign(d) {
             nextId = Math.max(nextId, Number(m[1]) + 1)
     }
     return { photo: { kind: d.photo.kind, ref: null, metresPerPixel: scale }, ruler: ruler,
-             targets: { origin: origin, direction: direction }, elements: elements, nextId: nextId }
+             targets: { origin: origin, direction: direction }, elements: elements, nextId: nextId,
+             density: 3, touchUps: null }
 }
 
 // A track from a parsed document whose photo TrackFile has already taken out: { track, warning } or { error }.

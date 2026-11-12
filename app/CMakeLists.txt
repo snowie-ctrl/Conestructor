@@ -59,6 +59,7 @@ qt_add_qml_module(conestructor_core
         qml/logic/conefile.mjs
         qml/logic/nodes.mjs
         qml/logic/density.mjs
+        qml/logic/touchups.mjs
     SOURCES
         services/AppInfo.h
         services/Settings.h services/Settings.cpp

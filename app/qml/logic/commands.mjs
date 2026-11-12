@@ -4,15 +4,19 @@
 //     ruler: null | { a: {x, y}, b: {x, y}, realLength },   ends in photo pixels, realLength in metres (0 = not set)
 //     targets: { origin: null | {x, y}, direction: null | {x, y} },  photo pixels
 //     elements: [ { id, type, x, y, rotation, props, joins: { A: null | {id, end}, B: ... } } ],  canvas metres
-//     nextId }
+//     nextId,
+//     density: 1 to 5, the track's cone density notch (density.mjs; 3 is SAE standard),
+//     touchUps: null | { placed, cones }, hand changes to the placed cones (touchups.mjs); while set the track is locked }
 // Every command is a pure function from the old track to a new one; `run` records each on an UndoStack, which keeps
 // the track before and after each step, so undo is exact. Tests: tests/qml/tst_commands.qml.
+import * as Density from "./density.mjs"
 import * as Elements from "./elements.mjs"
 import * as Snapping from "./snapping.mjs"
+import * as Touchups from "./touchups.mjs"
 
 export function emptyTrack() {
     return { photo: { kind: "none", ref: null, metresPerPixel: 0 }, ruler: null, targets: { origin: null, direction: null },
-             elements: [], nextId: 1 }
+             elements: [], nextId: 1, density: Density.STANDARD, touchUps: null }
 }
 
 export function clone(track) {
@@ -43,6 +47,19 @@ function attach(track, el, snap) {
 
 function point(p) {
     return p ? { x: p.x, y: p.y } : null
+}
+
+// A touch-up: the first freezes the placed cones into the track. Refused (null) when the track cannot be processed or
+// the change would change nothing (so a no-op never freezes and locks the track).
+function touched(t, change) {
+    const start = t.touchUps || Touchups.freeze(t)
+    if (!start)
+        return null
+    const after = change(start)
+    if (JSON.stringify(after.cones) === JSON.stringify(start.cones))
+        return null
+    t.touchUps = after
+    return t
 }
 
 // Each takes a copy of the track (theirs to change) and the arguments, and returns the new track.
@@ -214,7 +231,43 @@ const COMMANDS = {
         el.props[a.key] = Elements.clampProp(el.type, a.key, a.value).value
         Snapping.unjoinApart(t.elements)
         return t
+    },
+    setDensity(t, a) {
+        const notch = Math.round(Number(a.notch))
+        if (Density.NOTCHES.indexOf(notch) < 0)
+            return null
+        t.density = notch
+        return t
+    },
+    deleteCones(t, a) {
+        return touched(t, u => Touchups.removeCones(u, a.indices))
+    },
+    moveCone(t, a) {
+        return touched(t, u => Touchups.moveCone(u, a.index, a.x, a.y))
+    },
+    setConeType(t, a) {
+        return touched(t, u => Touchups.setType(u, a.indices, a.type))
+    },
+    pointCone(t, a) {
+        return touched(t, u => Touchups.pointCone(u, a.index, a.heading))
+    },
+    addCone(t, a) {
+        return touched(t, u => Touchups.addCone(u, a.x, a.y))
+    },
+    clearTouchUps(t) {
+        t.touchUps = null
+        return t
     }
+}
+
+export const COMMAND_NAMES = Object.keys(COMMANDS)
+
+// While touch-ups exist the track is locked: only these run (the touch-ups, clearing them, a new photo, New).
+export const WHILE_LOCKED = ["newTrack", "setPhoto", "deleteCones", "moveCone", "setConeType", "pointCone", "addCone",
+                             "clearTouchUps"]
+
+export function locked(track) {
+    return !!track.touchUps
 }
 
 function capitalised(text) {
@@ -255,6 +308,13 @@ export function label(track, name, a) {
     case "stretch": return "Stretch " + named(a.id)
     case "placeMany":
         return (a.verb || "Move") + " " + (a.moves.length === 1 ? named(a.moves[0].id) : a.moves.length + " elements")
+    case "setDensity": return "Change density"
+    case "deleteCones": return a.indices.length === 1 ? "Delete cone" : "Delete " + a.indices.length + " cones"
+    case "moveCone": return "Move cone"
+    case "setConeType": return a.type === "leaning" ? "Make leaning" : "Make standing"
+    case "pointCone": return "Turn cone"
+    case "addCone": return "Add cone"
+    case "clearTouchUps": return "Clear touch-ups"
     }
     return name
 }
@@ -274,6 +334,8 @@ export function run(stack, track, name, args) {
     if (!command)
         throw new Error("Unknown command " + name)
     const a = args || {}
+    if (locked(track) && WHILE_LOCKED.indexOf(name) < 0)
+        return track                                       // locked by touch-ups: refused
     const after = command(clone(track), a)
     if (after === null || JSON.stringify(after) === JSON.stringify(track))
         return track
