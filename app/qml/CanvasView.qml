@@ -70,6 +70,21 @@ Item {
     property var hoverNode: null      // the open end under the mouse ({ id, end }), or null
     // Placed cones are showing: they can be picked for touch-ups.
     readonly property bool conesShown: TrackStore.previewOn && TrackStore.showCones && TrackStore.preview !== null
+    property var menuPoint: null      // where the canvas menu was opened (photo pixels)
+    onConesShownChanged: if (!conesShown && placingKind === "cone") cancelPlacing()
+
+    // The rotate handle of the one selected leaning cone (canvas metres), 24 screen pixels past its tip, or null.
+    readonly property var coneHandle: {
+        if (!conesShown || TrackStore.coneSelection.length !== 1 || !(mpp > 0))
+            return null
+        const index = TrackStore.coneSelection[0]
+        const c = TrackStore.preview.canvasCones[index]
+        if (!c || c.type !== "leaning")
+            return null
+        const r = c.heading * Math.PI / 180
+        const reach = Touchups.LEANING_RADIUS + 24 / zoom * mpp
+        return { index: index, x: c.x + Math.cos(r) * reach, y: c.y + Math.sin(r) * reach }
+    }
 
     // The backwards element whose warning is under the cursor ("" when none), for its tip.
     readonly property string hoverWarning: {
@@ -184,6 +199,8 @@ Item {
             if (distance({ x: h.x / mpp, y: h.y / mpp }, w) < reach)
                 return { kind: "rotate", id: selected.id }
         }
+        if (coneHandle && distance({ x: coneHandle.x / mpp, y: coneHandle.y / mpp }, w) < reach)
+            return { kind: "coneRotate", index: coneHandle.index }
         if (t.ruler) {
             if (distance(t.ruler.a, w) < reach)
                 return { kind: "rulerA" }
@@ -250,6 +267,12 @@ Item {
             pickUp(kind)
     }
 
+    // Process › Add cone: a standing cone follows the mouse until a click puts it down (choosing it again drops it).
+    function addCone() {
+        if (conesShown)
+            clickTile("cone")
+    }
+
     function cancelPlacing() {
         if (placingBy === "click")
             TrackStore.message = ""
@@ -261,6 +284,8 @@ Item {
     }
 
     function placingHint(kind) {
+        if (kind === "cone")
+            return qsTr("Click where the cone goes · Esc to cancel")
         if (kind === "ruler")
             return rulerFirst ? qsTr("Click the other end · Esc to cancel")
                               : qsTr("Click one end of something you know the length of · Esc to cancel")
@@ -343,6 +368,8 @@ Item {
         } else if (kind === "origin" || kind === "direction") {
             TrackStore.run("setTarget", { which: kind, point: { x: w.x, y: w.y } })
             TrackStore.select(kind)
+        } else if (kind === "cone") {
+            TrackStore.addConeAt(w.x * mpp, w.y * mpp)
         } else if (g) {
             TrackStore.run("add", { type: kind, x: g.x, y: g.y, rotation: g.rotation, snap: g.snap })
             TrackStore.selectLast()
@@ -394,6 +421,10 @@ Item {
                     TrackStore.select(hit.id)
                 elementMenu.popup()
             }
+            if (!hit && conesShown) {
+                menuPoint = toWorld(e.x, e.y)
+                canvasMenu.popup()
+            }
             return
         }
         if (e.button !== Qt.LeftButton)
@@ -430,6 +461,12 @@ Item {
             press.cone = hit.index
             press.c = Object.assign({}, TrackStore.preview.canvasCones[hit.index])
             mode = "cone"
+            return
+        }
+        if (hit.kind === "coneRotate") {
+            press.cone = hit.index
+            press.c = Object.assign({}, TrackStore.preview.canvasCones[hit.index])
+            mode = "coneRotate"
             return
         }
         const t = TrackStore.track
@@ -518,6 +555,15 @@ Item {
                                                            frameTheta: TrackStore.frame ? TrackStore.frame.theta : 0 })
             TrackStore.run("stretch", { id: press.el.id, x: r.x, y: r.y, rotation: r.rotation, key: r.key, value: r.value,
                                         mergeKey: gestureKey })
+        } else if (mode === "cone") {
+            TrackStore.run("moveCone", { index: press.cone, x: press.c.x + dx * mpp, y: press.c.y + dy * mpp,
+                                         mergeKey: gestureKey })
+        } else if (mode === "coneRotate") {
+            const w = toWorld(e.x, e.y)
+            let heading = Math.atan2(w.y * mpp - press.c.y, w.x * mpp - press.c.x) * 180 / Math.PI
+            if ((e.modifiers & Qt.ShiftModifier) !== 0)
+                heading = Math.round(heading / 15) * 15
+            TrackStore.run("pointCone", { index: press.cone, heading: Frame.normalize(heading), mergeKey: gestureKey })
         } else if (mode === "box") {
             box = { x: Math.min(press.sx, e.x), y: Math.min(press.sy, e.y),
                     width: Math.abs(e.x - press.sx), height: Math.abs(e.y - press.sy) }
@@ -625,13 +671,35 @@ Item {
             opacity: 0.6
         }
         ConePreview { zoom: canvas.zoom }
+        // The selected leaning cone's rotate handle.
+        Rectangle {
+            objectName: "coneHandle"
+            visible: canvas.coneHandle !== null
+            width: 12 / canvas.zoom
+            height: width
+            radius: width / 2
+            x: canvas.coneHandle ? canvas.coneHandle.x / canvas.mpp - width / 2 : 0
+            y: canvas.coneHandle ? canvas.coneHandle.y / canvas.mpp - height / 2 : 0
+            color: "#ffffff"
+            border.color: "#202020"
+            border.width: 1 / canvas.zoom
+        }
         RulerView { zoom: canvas.zoom }
         TargetsView { zoom: canvas.zoom }
 
-        // A ruler or target being placed, where it would land.
+        // A ruler, target or cone being placed, where it would land.
         Item {
             visible: canvas.placingPoint !== null
             opacity: 0.6
+            Image {
+                visible: canvas.placingKind === "cone"
+                source: "qrc:/qt/qml/Conestructor/assets/images/upright-cone.png"
+                width: 2 * Touchups.STANDING_RADIUS / canvas.mpp
+                height: width
+                x: canvas.placingPoint ? canvas.placingPoint.x - width / 2 : 0
+                y: canvas.placingPoint ? canvas.placingPoint.y - height / 2 : 0
+                sourceSize: Qt.size(64, 64)
+            }
             Image {
                 visible: canvas.placingKind === "origin" || canvas.placingKind === "direction"
                 source: "qrc:/qt/qml/Conestructor/assets/images/crosshair.svg"
@@ -746,7 +814,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
         cursorShape: canvas.mode === "node" || (canvas.mode === "" && canvas.hoverNode !== null) ? Qt.CrossCursor
                      : canvas.mode === "pan" ? Qt.ClosedHandCursor
-                     : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" ? Qt.SizeAllCursor
+                     : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" || canvas.mode === "cone" ? Qt.SizeAllCursor
                      : Qt.ArrowCursor
         onPressed: (e) => canvas.pressAt(e)
         onPositionChanged: (e) => canvas.moveTo(e)
@@ -776,6 +844,15 @@ Item {
         }
         MenuItem { text: qsTr("Make leaning"); onTriggered: TrackStore.setConeTypes("leaning") }
         MenuItem { text: qsTr("Make standing"); onTriggered: TrackStore.setConeTypes("standing") }
+    }
+
+    Menu {
+        id: canvasMenu
+        objectName: "canvasMenu"
+        MenuItem {
+            text: qsTr("Add a cone here")
+            onTriggered: TrackStore.addConeAt(canvas.menuPoint.x * canvas.mpp, canvas.menuPoint.y * canvas.mpp)
+        }
     }
 
     // After the MouseArea, so clicks in the box reach it.

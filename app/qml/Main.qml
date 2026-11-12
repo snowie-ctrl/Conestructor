@@ -321,6 +321,7 @@ ApplicationWindow {
         Menu {
             title: qsTr("&Process")
             Action { text: qsTr("Place cones"); onTriggered: window.placeCones() }
+            Action { text: qsTr("Add cone"); enabled: canvasView.conesShown; onTriggered: canvasView.addCone() }
             Action { text: qsTr("Clear preview"); enabled: TrackStore.previewOn; onTriggered: window.clearPreview() }
         }
     }

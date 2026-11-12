@@ -340,6 +340,14 @@ QtObject {
         stack.seal()
     }
 
+    // A standing cone added by hand where the person clicked (canvas metres); it is selected.
+    function addConeAt(x, y) {
+        run("addCone", { x: x, y: y })
+        stack.seal()
+        if (previewOn && preview && preview.canvasCones)
+            selectCones([preview.canvasCones.length - 1], false)
+    }
+
     function deleteSelected() {
         if (coneSelection.length > 0) {
             const indices = coneSelection

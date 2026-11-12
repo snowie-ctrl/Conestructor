@@ -22,6 +22,14 @@ ScrollView {
     readonly property string kind: cone ? "cone" : pickedCones.length > 1 ? "cones"
                                    : el ? "element" : many.length > 1 ? "many" : TrackStore.selectedId
 
+    readonly property var coneFrame: cone && TrackStore.frame ? Frame.toFrame(TrackStore.frame, cone) : null
+
+    function moveConeTo(x, y) {
+        const index = TrackStore.coneSelection[0]
+        const p = Frame.fromFrame(TrackStore.frame, { x: x, y: y })
+        TrackStore.run("moveCone", { index: index, x: p.x, y: p.y, mergeKey: "cone-position:" + index })
+    }
+
     function elementName(id) {
         const e = TrackStore.element(id)
         return e ? Elements.NAMES[e.type] : ""
@@ -171,6 +179,32 @@ ScrollView {
             text: !panel.cone ? "" : panel.cone.element === null ? qsTr("Added by hand")
                   : qsTr("From %1 %2").arg(panel.elementName(panel.cone.element)).arg(panel.cone.element)
             color: "#b0b0b0"
+        }
+        PropField {
+            visible: panel.coneFrame !== null
+            def: ({ key: "coneX", label: qsTr("Position x"), kind: "length", min: -10000, max: 10000 })
+            value: panel.coneFrame ? panel.coneFrame.x : 0
+            onEdited: (v) => panel.moveConeTo(v, panel.coneFrame.y)
+            onFinished: TrackStore.seal()
+        }
+        PropField {
+            visible: panel.coneFrame !== null
+            def: ({ key: "coneY", label: qsTr("Position y"), kind: "length", min: -10000, max: 10000 })
+            value: panel.coneFrame ? panel.coneFrame.y : 0
+            onEdited: (v) => panel.moveConeTo(panel.coneFrame.x, v)
+            onFinished: TrackStore.seal()
+        }
+        // Where a leaning cone points: degrees counter-clockwise from the Origin -> Direction axis.
+        PropField {
+            visible: panel.coneFrame !== null && panel.cone.type === "leaning"
+            def: ({ key: "conePointing", label: qsTr("Pointing"), kind: "angle", min: -360, max: 360 })
+            value: panel.coneFrame ? Frame.headingToFrame(TrackStore.frame, panel.cone.heading) : 0
+            stepSize: 1
+            bigStep: 15
+            onEdited: (v) => TrackStore.run("pointCone", { index: TrackStore.coneSelection[0],
+                                                           heading: Frame.headingFromFrame(TrackStore.frame, v),
+                                                           mergeKey: "cone-pointing:" + TrackStore.coneSelection[0] })
+            onFinished: TrackStore.seal()
         }
         PropField {
             readonly property var types: panel.pickedCones.map(c => c.type)

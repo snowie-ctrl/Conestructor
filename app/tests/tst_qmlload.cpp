@@ -2022,6 +2022,83 @@ private slots:
         QVERIFY(w.store->property("previewOn").toBool());
         QCOMPARE(w.cones().size(), placed);
     }
+
+    // Part 4: a cone is dragged (one step), a leaning cone turned by its handle and by typing, cones added from the
+    // Process menu and from the canvas's right-click menu.
+    void movingTurningAndAddingCones()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        const QString units = settings->property("units").toString();
+        settings->setProperty("units", QStringLiteral("m"));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        const int placed = w.cones().size();
+        const double px = w.mpp() / w.zoom();                    // metres per screen pixel
+
+        const QVariantMap c0 = w.cones().value(0).toMap();
+        w.drag(w.conePoint(0), w.conePoint(0) + QPointF(40, 0));
+        QCOMPARE(w.label(), QStringLiteral("Move cone"));
+        const QVariantMap m0 = w.cones().value(0).toMap();
+        QVERIFY(qAbs(m0.value("x").toDouble() - c0.value("x").toDouble() - 40 * px) < 2 * px);
+        QVERIFY(m0.value("edited").toBool());
+        QMetaObject::invokeMethod(w.store, "undo");
+        QVERIFY(!w.store->property("locked").toBool());         // the whole drag was one step
+        QMetaObject::invokeMethod(w.store, "redo");
+
+        int leaning = -1;
+        const QVariantList now = w.cones();
+        for (int i = 0; i < now.size() && leaning < 0; ++i)
+            if (now[i].toMap().value("type").toString() == QStringLiteral("leaning"))
+                leaning = i;
+        w.click(w.conePoint(leaning));
+        QQuickItem *handle = w.named(QStringLiteral("coneHandle"));
+        QVERIFY(handle && handle->isVisible());
+        const QPointF h = handle->mapToItem(w.canvas, QPointF(handle->width() / 2, handle->height() / 2));
+        const QPointF centre = w.conePoint(leaning);
+        const double before = w.cones().value(leaning).toMap().value("heading").toDouble();
+        w.drag(h, centre + QPointF(-(h.y() - centre.y()), h.x() - centre.x()));     // a quarter turn clockwise
+        QCOMPARE(w.label(), QStringLiteral("Turn cone"));
+        const double turned = w.cones().value(leaning).toMap().value("heading").toDouble();
+        QVERIFY2(qAbs(std::remainder(turned - before - 90, 360.0)) < 3, qPrintable(QString::number(turned - before)));
+
+        QQuickItem *pointing = textBox(findField(w.window, QStringLiteral("Pointing")));
+        QVERIFY(pointing);
+        pointing->forceActiveFocus();
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("45"));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        const QVariantList frameCones = plain(w.store->property("preview")).toMap().value("cones").toList();
+        QVERIFY(qAbs(frameCones.value(leaning).toMap().value("heading").toDouble() - 45) < 1e-6);
+
+        QQuickItem *x = textBox(findField(w.window, QStringLiteral("Position x")));
+        x->forceActiveFocus();
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("12"));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        const QVariantList moved = plain(w.store->property("preview")).toMap().value("cones").toList();
+        QVERIFY(qAbs(moved.value(leaning).toMap().value("x").toDouble() - 12) < 1e-6);
+
+        QMetaObject::invokeMethod(w.canvas, "addCone");
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("cone"));
+        w.click(w.screen(5, 5));
+        QCOMPARE(w.cones().size(), placed + 1);
+        QCOMPARE(w.label(), QStringLiteral("Add cone"));
+        QVERIFY(isNull(w.cones().last().toMap().value("element")));
+        QCOMPARE(plain(w.store->property("coneSelection")).toList(), QVariantList{ placed });
+
+        QMetaObject::invokeMethod(w.canvas, "addCone");
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QCOMPARE(w.canvas->property("placingKind").toString(), QString());
+
+        w.click(w.screen(8, 8), Qt::RightButton);
+        QObject *menu = w.window->findChild<QObject *>(QStringLiteral("canvasMenu"));
+        QTRY_VERIFY(menu && menu->property("opened").toBool());
+        w.clickItem(findMenuItem(w.window, QStringLiteral("Add a cone here")));
+        QCOMPARE(w.cones().size(), placed + 2);
+        QVERIFY(qAbs(w.cones().last().toMap().value("x").toDouble() - 8) < 2 * px);
+        settings->setProperty("units", units);
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)
