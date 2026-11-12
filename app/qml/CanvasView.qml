@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Shapes
 import Conestructor
+import "logic/car.mjs" as Car
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
 import "logic/nodes.mjs" as Nodes
@@ -71,6 +72,22 @@ Item {
     // Placed cones are showing: they can be picked for touch-ups.
     readonly property bool conesShown: TrackStore.previewOn && TrackStore.showCones && TrackStore.preview !== null
     property var menuPoint: null      // where the canvas menu was opened (photo pixels)
+
+    // The true-size car outline (Tools › Car outline): shown or not, and where ({ x, y, rotation } in canvas metres). Kept
+    // until the app closes; never part of the track or the undo history. It needs a scale.
+    property bool carShown: false
+    property var car: null
+    onMppChanged: if (!(mpp > 0)) carShown = false
+
+    function setCarShown(on) {
+        if (on && !(mpp > 0))
+            return
+        if (on && car === null) {
+            const c = toWorld(width / 2, height / 2)
+            car = { x: c.x * mpp, y: c.y * mpp, rotation: TrackStore.frame ? Frame.headingFromFrame(TrackStore.frame, 0) : 0 }
+        }
+        carShown = on
+    }
     onConesShownChanged: if (!conesShown && placingKind === "cone") cancelPlacing()
 
     // The rotate handle of the one selected leaning cone (canvas metres), 24 screen pixels past its tip, or null.
@@ -193,6 +210,13 @@ Item {
         const w = toWorld(sx, sy)
         const reach = 10 / zoom
         const t = TrackStore.track
+        if (carShown && car && mpp > 0) {
+            const h = Car.handle(car, Settings.carLength, 24 / zoom * mpp)
+            if (distance({ x: h.x / mpp, y: h.y / mpp }, w) < reach)
+                return { kind: "carRotate" }
+            if (Car.contains(car, Settings.carLength, Settings.carWidth, { x: w.x * mpp, y: w.y * mpp }))
+                return { kind: "car" }
+        }
         const selected = TrackStore.selectedElement
         if (selected && mpp > 0) {
             const h = Elements.rotateHandle(selected, 24 / zoom * mpp)
@@ -429,6 +453,12 @@ Item {
         }
         if (e.button !== Qt.LeftButton)
             return
+        // The car outline works on a locked track too, and never changes the selection.
+        if (hit && (hit.kind === "car" || hit.kind === "carRotate")) {
+            press.car = Object.assign({}, car)
+            mode = hit.kind
+            return
+        }
         // A locked track (touch-ups) only selects: nothing on it moves, and the status bar says how to unlock it.
         if (TrackStore.locked && hit && ["element", "node", "rotate", "rulerA", "rulerB", "ruler", "target"].indexOf(hit.kind) >= 0) {
             const id = hit.kind === "target" ? hit.which : hit.kind.indexOf("ruler") === 0 ? "ruler" : hit.id
@@ -555,6 +585,12 @@ Item {
                                                            frameTheta: TrackStore.frame ? TrackStore.frame.theta : 0 })
             TrackStore.run("stretch", { id: press.el.id, x: r.x, y: r.y, rotation: r.rotation, key: r.key, value: r.value,
                                         mergeKey: gestureKey })
+        } else if (mode === "car") {
+            car = Object.assign({}, press.car, { x: press.car.x + dx * mpp, y: press.car.y + dy * mpp })
+        } else if (mode === "carRotate") {
+            const w = toWorld(e.x, e.y)
+            car = Object.assign({}, press.car, { rotation: Car.facing(press.car, { x: w.x * mpp, y: w.y * mpp },
+                                                                      (e.modifiers & Qt.ShiftModifier) !== 0 ? 15 : 0) })
         } else if (mode === "cone") {
             TrackStore.run("moveCone", { index: press.cone, x: press.c.x + dx * mpp, y: press.c.y + dy * mpp,
                                          mergeKey: gestureKey })
@@ -686,6 +722,7 @@ Item {
         }
         RulerView { zoom: canvas.zoom }
         TargetsView { zoom: canvas.zoom }
+        CarOutline { canvas: canvas }
 
         // A ruler, target or cone being placed, where it would land.
         Item {
@@ -814,7 +851,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
         cursorShape: canvas.mode === "node" || (canvas.mode === "" && canvas.hoverNode !== null) ? Qt.CrossCursor
                      : canvas.mode === "pan" ? Qt.ClosedHandCursor
-                     : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" || canvas.mode === "cone" ? Qt.SizeAllCursor
+                     : canvas.mode === "move" || canvas.mode === "moveGroup" || canvas.mode === "target" || canvas.mode === "cone" || canvas.mode === "car" ? Qt.SizeAllCursor
                      : Qt.ArrowCursor
         onPressed: (e) => canvas.pressAt(e)
         onPositionChanged: (e) => canvas.moveTo(e)

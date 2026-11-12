@@ -319,6 +319,16 @@ ApplicationWindow {
             }
         }
         Menu {
+            title: qsTr("&Tools")
+            Action {
+                text: qsTr("Car outline")
+                checkable: true
+                checked: canvasView.carShown
+                enabled: TrackStore.mpp > 0
+                onTriggered: canvasView.setCarShown(checked)
+            }
+        }
+        Menu {
             title: qsTr("&Process")
             Action { text: qsTr("Place cones"); onTriggered: window.placeCones() }
             Action { text: qsTr("Add cone"); enabled: canvasView.conesShown; onTriggered: canvasView.addCone() }

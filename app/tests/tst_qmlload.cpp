@@ -2099,6 +2099,82 @@ private slots:
         QVERIFY(qAbs(w.cones().last().toMap().value("x").toDouble() - 8) < 2 * px);
         settings->setProperty("units", units);
     }
+
+    // Part 4: Tools › Car outline shows one true-size car mid-view, facing along Origin → Direction; it is dragged and
+    // turned (never an undo step), follows Preferences, and keeps its place when hidden and shown again.
+    void theCarOutline()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        settings->setProperty("carLength", 2.9);
+        settings->setProperty("carWidth", 1.4);
+        settings->setProperty("carImage", QString());
+        QQuickItem *outline = w.named(QStringLiteral("carOutline"));
+        QVERIFY(outline && !outline->isVisible());
+        QMetaObject::invokeMethod(w.canvas, "setCarShown", Q_ARG(QVariant, true));
+        QVERIFY(outline->isVisible());
+        QVariantMap car = plain(w.canvas->property("car")).toMap();
+        const QPointF middle(w.canvas->width() / 2, w.canvas->height() / 2);
+        QVERIFY(QLineF(w.screen(car.value("x").toDouble(), car.value("y").toDouble()), middle).length() < 2);
+        QVERIFY(qAbs(car.value("rotation").toDouble()) < 1e-6);     // the demo's x axis points right on screen
+
+        const QString label = w.label();
+        w.drag(middle, middle + QPointF(60, 20));
+        car = plain(w.canvas->property("car")).toMap();
+        const QPointF at = w.screen(car.value("x").toDouble(), car.value("y").toDouble());
+        QVERIFY(QLineF(at, middle + QPointF(60, 20)).length() < 2);
+        QCOMPARE(w.label(), label);
+
+        const QPointF nose = at + QPointF(2.9 / w.mpp() * w.zoom() / 2 + 24, 0);
+        w.drag(nose, at + QPointF(0, 80));
+        car = plain(w.canvas->property("car")).toMap();
+        QVERIFY(qAbs(car.value("rotation").toDouble() - 90) < 2);
+
+        settings->setProperty("carLength", 4.0);
+        QVERIFY(qAbs(outline->property("lengthPx").toDouble() - 4.0 / w.mpp()) < 1e-6);
+        QMetaObject::invokeMethod(w.canvas, "setCarShown", Q_ARG(QVariant, false));
+        QVERIFY(!outline->isVisible());
+        QMetaObject::invokeMethod(w.canvas, "setCarShown", Q_ARG(QVariant, true));
+        QCOMPARE(plain(w.canvas->property("car")).toMap(), car);
+        settings->setProperty("carLength", 2.9);
+    }
+
+    // Part 4: Preferences › Cones and Car.
+    void thePreferencesHaveConesAndACar()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        const QString units = settings->property("units").toString();
+        settings->setProperty("units", QStringLiteral("m"));
+        settings->setProperty("conesOwned", 0);
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("preferencesDialog"));
+        QVERIFY(dialog);
+        QMetaObject::invokeMethod(dialog, "open");
+        QTRY_VERIFY(dialog->property("opened").toBool());
+
+        w.clickItem(w.named(QStringLiteral("conesOwnedField")));
+        typeText(w.window, QStringLiteral("150"));
+        QCOMPARE(settings->property("conesOwned").toInt(), 150);
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        QTest::keyClick(w.window, Qt::Key_Backspace);
+        QCOMPARE(settings->property("conesOwned").toInt(), 0);
+
+        QQuickItem *length = textBox(findField(w.window, QStringLiteral("Length")));
+        length->forceActiveFocus();
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("3.5"));
+        QCOMPARE(settings->property("carLength").toDouble(), 3.5);
+
+        QCOMPARE(w.named(QStringLiteral("carImageName"))->property("text").toString(), QStringLiteral("None"));
+        settings->setProperty("carImage", dir.filePath(QStringLiteral("missing.png")));
+        QCOMPARE(w.named(QStringLiteral("carImageName"))->property("text").toString(), QStringLiteral("Image not found"));
+
+        settings->setProperty("carImage", QString());
+        settings->setProperty("carLength", 2.9);
+        settings->setProperty("units", units);
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)
