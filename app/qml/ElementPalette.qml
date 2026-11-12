@@ -28,8 +28,8 @@ GridLayout {
             name: modelData.name
             colour: modelData.colour
             tip: modelData.tip
-            usable: grid.unlocked
-            lockedTip: qsTr("Finish setup first.")
+            usable: grid.unlocked && !TrackStore.locked
+            lockedTip: TrackStore.locked ? qsTr("Clear preview to change the track.") : qsTr("Finish setup first.")
         }
     }
 }

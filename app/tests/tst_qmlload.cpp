@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QColor>
 #include <QImage>
 #include <QJSValue>
 #include <QJsonArray>
@@ -1742,6 +1743,116 @@ private slots:
         w.run(QStringLiteral("add"), { { "type", "straight" }, { "x", x1 }, { "y", y1 + 20 } });   // e5, free
         QTest::mouseClick(w.window, Qt::LeftButton, Qt::ControlModifier, w.scene(w.screen(x1 - 10, y1 + 20)));
         QCOMPARE(plain(w.store->property("selection")).toStringList(), QStringList({ QStringLiteral("e1"), QStringLiteral("e5") }));
+    }
+
+    // Part 4: the Cones box's slider sets the track's notch (one undo step per notch), the count follows a quarter of a
+    // second later, and the status bar shows it against the cones we own, red when over.
+    void densityAndTheConeCount()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        settings->setProperty("conesOwned", 0);
+        QTRY_VERIFY(w.store->property("coneCount").toInt() > 0);
+        const int standard = w.store->property("coneCount").toInt();
+        QQuickItem *count = w.named(QStringLiteral("coneCount"));
+        QVERIFY(count);
+        QCOMPARE(count->property("text").toString(), QStringLiteral("%1 cones").arg(standard));
+        QCOMPARE(w.named(QStringLiteral("densityName"))->property("text").toString(), QStringLiteral("SAE standard"));
+
+        QQuickItem *slider = w.named(QStringLiteral("densitySlider"));
+        QVERIFY(slider && slider->isEnabled());
+        slider->forceActiveFocus();
+        QTest::keyClick(w.window, Qt::Key_Right);
+        QTest::keyClick(w.window, Qt::Key_Right);
+        QCOMPARE(w.track().value("density").toInt(), 5);
+        QCOMPARE(w.label(), QStringLiteral("Change density"));
+        QCOMPARE(w.named(QStringLiteral("densityName"))->property("text").toString(), QStringLiteral("Most"));
+        QTRY_VERIFY(w.store->property("coneCount").toInt() > standard);
+        const int most = w.store->property("coneCount").toInt();
+
+        settings->setProperty("conesOwned", standard);
+        QCOMPARE(count->property("text").toString(), QStringLiteral("Cones %1 / %2").arg(most).arg(standard));
+        QCOMPARE(count->property("color").value<QColor>(), QColor(QStringLiteral("#ff6b6b")));
+        QMetaObject::invokeMethod(w.store, "undo");
+        QMetaObject::invokeMethod(w.store, "undo");
+        QCOMPARE(w.track().value("density").toInt(), 3);
+        QTRY_COMPARE(w.store->property("coneCount").toInt(), standard);
+        QCOMPARE(count->property("color").value<QColor>(), QColor(QStringLiteral("#d0d0d0")));
+        settings->setProperty("conesOwned", 0);         // the ini is shared by every test in this run
+
+        w.run(QStringLiteral("setTarget"), { { "which", "direction" }, { "point", QVariant() } });
+        QTRY_VERIFY(!count->isVisible());               // nothing to count until the track can be processed
+        QVERIFY(!slider->isEnabled());                  // and the slider waits for setup
+    }
+
+    // Part 4: an element's own density, from the panel's drop-down.
+    void anElementsOwnDensity()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.store, "select", Q_ARG(QVariant, QStringLiteral("e1")));
+        QQuickItem *field = findField(w.window, QStringLiteral("Cone density"));
+        QVERIFY(field);
+        QQuickItem *combo = nullptr;
+        for (QQuickItem *item : allItems(field))
+            if (QByteArray(item->metaObject()->className()).contains("ComboBox"))
+                combo = item;
+        QVERIFY(combo && combo->isVisible());
+        QCOMPARE(combo->property("displayText").toString(), QStringLiteral("Same as track (SAE standard)"));
+        combo->forceActiveFocus();
+        QTest::keyClick(w.window, Qt::Key_Down);
+        QCOMPARE(w.element(QStringLiteral("e1")).value("props").toMap().value("density").toInt(), 1);
+        QCOMPARE(w.label(), QStringLiteral("Change Cone density"));
+        QCOMPARE(combo->property("displayText").toString(), QStringLiteral("Fewest"));
+        for (QQuickItem *item : allItems(field))          // no typing box but the drop-down's own
+            if (QByteArray(item->metaObject()->className()).contains("TextField") && !combo->isAncestorOf(item))
+                QVERIFY(!item->isVisible());
+    }
+
+    // Part 4, review focus 5: while touch-ups exist the track is locked. Tiles, the slider and fields are greyed; a drag
+    // on an element, its node or a target moves nothing and records no step; Ctrl+D and Delete on elements do nothing.
+    void aLockedTrackStaysPut()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        w.run(QStringLiteral("deleteCones"), { { "indices", QVariantList{ 0 } } });
+        QVERIFY(w.store->property("locked").toBool());
+        QCOMPARE(w.label(), QStringLiteral("Delete cone"));
+        QVERIFY(w.named(QStringLiteral("lockedNote"))->isVisible());
+        QVERIFY(w.named(QStringLiteral("lockedNote"))->property("text").toString().startsWith(QStringLiteral("Touched up: 1 change.")));
+        QVERIFY(!w.tile(QStringLiteral("straight"))->property("usable").toBool());
+        QVERIFY(!w.named(QStringLiteral("densitySlider"))->isEnabled());
+
+        const QVariantMap before = w.track();
+        const QVariantMap e2 = w.element(QStringLiteral("e2"));
+        w.drag(w.screen(e2.value("x").toDouble(), e2.value("y").toDouble()),
+               w.screen(e2.value("x").toDouble() + 8, e2.value("y").toDouble() + 8));
+        QCOMPARE(w.track(), before);
+        QCOMPARE(w.label(), QStringLiteral("Delete cone"));
+        QCOMPARE(w.store->property("message").toString(), QStringLiteral("Clear preview to change the track"));
+        QCOMPARE(w.store->property("selectedId").toString(), QStringLiteral("e2"));
+        QVERIFY(!findField(w.window, QStringLiteral("Track width"))->isEnabled());
+
+        const QVariantMap e1 = w.element(QStringLiteral("e1"));
+        const double length = e1.value("props").toMap().value("length").toDouble();
+        w.drag(w.screen(e1.value("x").toDouble() - length / 2, e1.value("y").toDouble()),
+               w.screen(e1.value("x").toDouble() - length / 2 - 6, e1.value("y").toDouble()));     // e1's open end
+        const QVariantMap origin = w.track().value("targets").toMap().value("origin").toMap();
+        const QPointF o = w.screen(origin.value("x").toDouble() * w.mpp(), origin.value("y").toDouble() * w.mpp());
+        w.drag(o, o + QPointF(30, 30));
+        QCOMPARE(w.track(), before);
+
+        QTest::keyClick(w.window, Qt::Key_D, Qt::ControlModifier);
+        QTest::keyClick(w.window, Qt::Key_Delete);
+        QCOMPARE(w.track(), before);
+        QCOMPARE(w.store->property("elementCount").toInt(), 4);
+        QCOMPARE(w.label(), QStringLiteral("Delete cone"));
+
+        QMetaObject::invokeMethod(w.store, "undo");            // back past the only touch-up: unlocked
+        QVERIFY(!w.store->property("locked").toBool());
+        QVERIFY(w.tile(QStringLiteral("straight"))->property("usable").toBool());
     }
 };
 

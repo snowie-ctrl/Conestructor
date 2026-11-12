@@ -3,9 +3,11 @@ import QtQuick
 import Conestructor
 import "logic/commands.mjs" as Commands
 import "logic/conefile.mjs" as ConeFile
+import "logic/density.mjs" as Density
 import "logic/elements.mjs" as Elements
 import "logic/frame.mjs" as Frame
 import "logic/postprocess.mjs" as Post
+import "logic/touchups.mjs" as Touchups
 
 // The track being edited and every change to it. The track is plain data (see logic/commands.mjs); every edit runs
 // as a command through the undo stack, and the canvas and panels draw from `track`. Nothing drawn keeps a copy.
@@ -42,6 +44,31 @@ QtObject {
     // Elements whose inside edge crosses over itself: they show a warning too (advice only).
     readonly property var foldedIds: track.elements.filter(e => Elements.folds(e)).map(e => e.id)
 
+    // Touch-ups lock the track: only the cones, the photo, New and Open change it until they are cleared (commands.mjs).
+    readonly property bool locked: Commands.locked(track)
+    readonly property int touchUpChanges: Touchups.changes(track.touchUps)
+    readonly property int density: Density.trackNotch(track)
+
+    // How many cones Place cones would put down now (the touched-up list while locked), or -1 while the track cannot be
+    // processed. Worked out a quarter of a second after the last change, so a drag does not process the track on every
+    // mouse move.
+    property int coneCount: -1
+    property Timer countTimer: Timer {
+        interval: 250
+        onTriggered: store.countCones()
+    }
+    onTrackChanged: countTimer.restart()
+
+    function countCones() {
+        const r = locked ? Touchups.result(track) : Post.run(track)
+        coneCount = r.error ? -1 : r.cones.length
+    }
+
+    // Said whenever something on a locked track is pressed or asked for.
+    function lockedNote() {
+        message = qsTr("Clear preview to change the track")
+    }
+
     property string message: ""
     property bool previewOn: false
     property var preview: null
@@ -68,6 +95,8 @@ QtObject {
         if (kept.length !== selection.length)
             selection = kept
         syncStack()
+        if (locked && !previewOn)
+            previewOn = true            // a touched-up track always shows its cones
         if (previewOn)
             refreshPreview()
     }
@@ -272,6 +301,10 @@ QtObject {
     function deleteSelected() {
         if (selection.length === 0)
             return
+        if (locked) {
+            lockedNote()
+            return
+        }
         const id = selectedId
         if (id === "ruler") {
             if (elementCount > 0) {
@@ -289,6 +322,10 @@ QtObject {
 
     // Copies every selected element (joins between them kept) and selects the copies.
     function duplicateSelected() {
+        if (locked) {
+            lockedNote()
+            return
+        }
         const ids = selectedElements.map(e => e.id)
         if (ids.length === 0)
             return
@@ -298,6 +335,10 @@ QtObject {
     }
 
     function reverseSelected() {
+        if (locked) {
+            lockedNote()
+            return
+        }
         const ids = selectedElements.map(e => e.id)
         if (ids.length === 0)
             return
@@ -320,7 +361,12 @@ QtObject {
         return result
     }
 
+    // Place cones again starts a fresh round: touch-ups are cleared first (one undo step; Main asks before).
     function placeCones() {
+        if (locked) {
+            run("clearTouchUps")
+            seal()
+        }
         const result = processed()
         preview = result
         previewOn = result !== null
@@ -329,7 +375,7 @@ QtObject {
     }
 
     function refreshPreview() {
-        const result = Post.run(track)
+        const result = locked ? Touchups.result(track) : Post.run(track)
         if (result.error) {
             previewOn = false
             preview = null
@@ -339,7 +385,12 @@ QtObject {
         }
     }
 
+    // Touch-ups end with the preview (one undo step; Main asks before).
     function clearPreview() {
+        if (locked) {
+            run("clearTouchUps")
+            seal()
+        }
         previewOn = false
         preview = null
     }

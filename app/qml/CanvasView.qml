@@ -379,6 +379,17 @@ Item {
         }
         if (e.button !== Qt.LeftButton)
             return
+        // A locked track (touch-ups) only selects: nothing on it moves, and the status bar says how to unlock it.
+        if (TrackStore.locked && hit && ["element", "node", "rotate", "rulerA", "rulerB", "ruler", "target"].indexOf(hit.kind) >= 0) {
+            const id = hit.kind === "target" ? hit.which : hit.kind.indexOf("ruler") === 0 ? "ruler" : hit.id
+            if (hit.kind === "element" && ctrl)
+                TrackStore.toggle(id)
+            else
+                TrackStore.select(id)
+            TrackStore.lockedNote()
+            mode = ""
+            return
+        }
         if (!hit) {
             if (shift) {
                 press.w = toWorld(e.x, e.y)
@@ -429,7 +440,7 @@ Item {
     function moveTo(e) {
         hover = toWorld(e.x, e.y)
         if (!mouse.pressed)
-            hoverNode = placingKind === "" ? nodeAt(hover) : null
+            hoverNode = placingKind === "" && !TrackStore.locked ? nodeAt(hover) : null
         if (placingBy === "click")
             updatePlacing(e.x, e.y, (e.modifiers & Qt.ControlModifier) !== 0)
         if (!mouse.pressed || mode === "")
@@ -713,9 +724,9 @@ Item {
     Menu {
         id: elementMenu
         objectName: "elementMenu"
-        MenuItem { text: qsTr("Duplicate"); onTriggered: TrackStore.duplicateSelected() }
-        MenuItem { text: qsTr("Delete"); onTriggered: TrackStore.deleteSelected() }
-        MenuItem { text: qsTr("Reverse direction"); onTriggered: TrackStore.reverseSelected() }
+        MenuItem { text: qsTr("Duplicate"); enabled: !TrackStore.locked; onTriggered: TrackStore.duplicateSelected() }
+        MenuItem { text: qsTr("Delete"); enabled: !TrackStore.locked; onTriggered: TrackStore.deleteSelected() }
+        MenuItem { text: qsTr("Reverse direction"); enabled: !TrackStore.locked; onTriggered: TrackStore.reverseSelected() }
     }
 
     // After the MouseArea, so clicks in the box reach it.

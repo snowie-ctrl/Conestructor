@@ -199,6 +199,11 @@ ApplicationWindow {
         return TrackStore.previewOn && TrackStore.preview ? TrackStore.preview.cones.length : 0
     }
 
+    // Process › Place cones and the Cones box's button. Task 6 asks first when touch-ups would be cleared.
+    function placeCones() {
+        TrackStore.placeCones()
+    }
+
     menuBar: MenuBar {
         Menu {
             id: fileMenu
@@ -301,7 +306,7 @@ ApplicationWindow {
         }
         Menu {
             title: qsTr("&Process")
-            Action { text: qsTr("Place cones"); onTriggered: TrackStore.placeCones() }
+            Action { text: qsTr("Place cones"); onTriggered: window.placeCones() }
             Action { text: qsTr("Clear preview"); enabled: TrackStore.previewOn; onTriggered: TrackStore.clearPreview() }
         }
     }
@@ -376,6 +381,11 @@ ApplicationWindow {
                 ElementPalette {
                     canvas: canvasView
                     Layout.fillWidth: true
+                }
+
+                ConesBox {
+                    Layout.fillWidth: true
+                    onPlaceCones: window.placeCones()
                 }
 
                 PropertyPanel {

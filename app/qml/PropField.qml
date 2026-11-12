@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Conestructor
+import "logic/density.mjs" as Density
 import "logic/elements.mjs" as Elements
 import "logic/units.mjs" as Units
 
@@ -24,11 +25,14 @@ ColumnLayout {
     property string note: ""
     readonly property string unit: Settings.units
     readonly property bool isChoice: def.kind === "choice"
+    readonly property bool isNotch: def.kind === "notch"
 
     Layout.fillWidth: true
     spacing: 2
 
     function shown() {
+        if (isNotch)
+            return ""
         if (mixed)
             return ""
         if (emptyWhenZero && !(value > 0))
@@ -115,7 +119,7 @@ ColumnLayout {
 
         TextField {
             id: input
-            visible: !field.isChoice
+            visible: !field.isChoice && !field.isNotch
             Layout.fillWidth: true
             color: field.bad ? "#ff6b6b" : "#f0f0f0"
             placeholderText: field.mixed ? qsTr("mixed") : field.emptyWhenZero ? qsTr("Type it here") : ""
@@ -135,8 +139,21 @@ ColumnLayout {
             Keys.onDownPressed: (e) => field.step(-1, (e.modifiers & Qt.ShiftModifier) !== 0)
         }
 
+        // A cone density: the track's notch (0) or the element's own (1 to 5). The closed box names the track's notch.
+        // After the text box, so a setting's first text box is always its own.
+        ComboBox {
+            visible: field.isNotch
+            Layout.fillWidth: true
+            model: field.isNotch ? [qsTr("Same as track")].concat(Density.NOTCHES.map(n => Density.NAMES[n])) : []
+            currentIndex: field.isNotch && !field.mixed ? Number(field.value) : -1
+            displayText: field.mixed ? qsTr("mixed")
+                         : currentIndex === 0 ? qsTr("Same as track (%1)").arg(Density.NAMES[TrackStore.density])
+                         : currentText
+            onActivated: (index) => field.edited(index)
+        }
+
         ColumnLayout {
-            visible: !field.isChoice
+            visible: !field.isChoice && !field.isNotch
             spacing: 0
             ToolButton {
                 text: "▲"

@@ -56,6 +56,14 @@ ScrollView {
             text: qsTr("Click something on the canvas to change it.")
             color: "#b0b0b0"
         }
+        Label {
+            objectName: "lockedPanelNote"
+            visible: TrackStore.locked && panel.kind !== "" && panel.kind !== "cone" && panel.kind !== "cones"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: qsTr("Clear preview to change the track.")
+            color: "#ffb74d"
+        }
 
         Label {
             visible: panel.framePosition !== null
@@ -65,6 +73,7 @@ ScrollView {
         }
         // Degrees counter-clockwise from the Origin -> Direction axis. Typing turns the element's whole joined chain.
         PropField {
+            enabled: !TrackStore.locked
             visible: panel.framePosition !== null
             def: ({ key: "rotation", label: qsTr("Rotation"), kind: "angle", min: -360, max: 360 })
             value: panel.frameRotation
@@ -79,13 +88,14 @@ ScrollView {
         Repeater {
             model: panel.defs
             PropField {
+                enabled: !TrackStore.locked
                 required property var modelData
                 def: modelData
                 value: panel.el ? panel.el.props[modelData.key] : 0
                 onEdited: (v) => {
-                    const choice = modelData.kind === "choice"   // read first: changing a choice can rebuild this field
+                    const once = modelData.kind === "choice" || modelData.kind === "notch"   // read first: it can rebuild this field
                     TrackStore.run("setProp", { id: panel.el.id, key: modelData.key, value: v })
-                    if (choice)
+                    if (once)
                         TrackStore.seal()
                 }
                 onFinished: TrackStore.seal()
@@ -95,15 +105,16 @@ ScrollView {
         Repeater {
             model: panel.sharedDefs
             PropField {
+                enabled: !TrackStore.locked
                 required property var modelData
                 readonly property var entry: panel.sharedEntry(modelData.key)
                 def: modelData
                 mixed: entry !== null && entry.mixed
                 value: entry && !entry.mixed ? entry.value : (modelData.kind === "choice" ? "" : 0)
                 onEdited: (v) => {
-                    const choice = modelData.kind === "choice"   // read first: a choice can rebuild this field
+                    const once = modelData.kind === "choice" || modelData.kind === "notch"   // read first: it can rebuild this field
                     TrackStore.run("setProps", { ids: panel.many.map(e => e.id), key: modelData.key, value: v })
-                    if (choice)
+                    if (once)
                         TrackStore.seal()
                 }
                 onFinished: TrackStore.seal()
@@ -118,6 +129,7 @@ ScrollView {
             color: "#b0b0b0"
         }
         PropField {
+            enabled: !TrackStore.locked
             visible: panel.kind === "ruler"
             def: ({ key: "realLength", label: qsTr("Real length"), kind: "length", min: 0.1, max: 1000 })
             value: TrackStore.track.ruler ? TrackStore.track.ruler.realLength : 0
