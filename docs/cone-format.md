@@ -61,13 +61,13 @@ The fields always come in this order, and the photo is always last, so the reada
 | `saved` | When it was saved, ISO 8601 UTC. |
 | `units`, `axes` | Fixed: metres, and the frame in words. |
 | `targets` | `origin` (always `{ "x": 0, "y": 0 }`), `direction` (always on +x) and the `distance` between them in metres. `origin` is `null` until Origin is placed; `direction` and `distance` are `null` until Origin, Direction and the scale are all set. |
-| `cones` | Every cone in driving order. Cones of lines (straight rows for walls and boundaries) come after the course. `index` counts from 0; `type` is `standing` or `leaning`; `x`, `y` in metres (to the millimetre); `heading` is where a leaning cone points (0 for standing cones); `element` is the id of the track element that made it (`null` for a cone added by hand). Empty when the track cannot be processed yet. |
-| `design` | Conestructor's own editable track (element settings, joins, the ruler, positions on the photo). It may change between app versions; other apps should read `cones` instead. |
+| `cones` | Every cone in driving order. Cones of lines (straight rows for walls and boundaries) come after the course. `index` counts from 0; `type` is `standing` or `leaning`; `x`, `y` in metres (to the millimetre); `heading` is where a leaning cone points (0 for standing cones); `element` is the id of the track element that made it (`null` for a cone added by hand). Empty when the track cannot be processed yet. After touch-ups in Conestructor (cones deleted, moved, switched between standing and leaning, turned or added by hand after placing them) this is the touched-up list: a cone changed or added by hand carries `"edited": true`, and an added cone has `"element": null`; deleted cones are simply not there. |
+| `design` | Conestructor's own editable track (element settings, joins, the ruler, positions on the photo, the cone density and any touch-ups). It may change between app versions; other apps should read `cones` instead. |
 | `photo` | The lot photo: `mediaType` (`image/png` or `image/jpeg`), `width` and `height` in pixels, and `data`, the original file's bytes in base64. `null` when the track has no photo. |
 
 ## Rules for readers
 
 - Ignore fields you do not know. New optional fields do not change `version`; only a change of structure does.
-- `cones` is always the final list, including any cones someone changed by hand in Conestructor. Such a cone may carry
-  `"edited": true`.
+- `cones` is always the final list, including any touch-ups made by hand in Conestructor. A cone changed or added by hand
+  carries `"edited": true`; other cones leave the field out.
 - Positions are rounded to the millimetre and headings to a hundredth of a degree.

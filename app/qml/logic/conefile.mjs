@@ -3,9 +3,12 @@
 // base64; and reads a parsed document back into a track, refusing anything it cannot use. Tests:
 // tests/qml/tst_conefile.qml.
 import * as Commands from "./commands.mjs"
+import * as Density from "./density.mjs"
 import * as Elements from "./elements.mjs"
 import * as Frame from "./frame.mjs"
 import * as Post from "./postprocess.mjs"
+import * as Snapping from "./snapping.mjs"
+import * as Touchups from "./touchups.mjs"
 
 export const FORMAT = "conestructor-track"
 export const VERSION = 1
@@ -43,11 +46,15 @@ export function toDocument(track, info) {
         direction: frame ? { x: round(frame.distance, 3), y: 0 } : null,
         distance: frame ? round(frame.distance, 3) : null
     }
-    const result = Post.run(track)
-    const cones = result.error ? [] : result.cones.map(c => ({
-        index: c.index, type: c.type, x: round(c.x, 3), y: round(c.y, 3),
-        heading: c.type === "standing" ? 0 : round(c.heading, 2), element: c.element
-    }))
+    // Touch-ups are the final list while they exist; otherwise the cones are worked out now.
+    const result = track.touchUps ? Touchups.result(track) : Post.run(track)
+    const cones = result.error ? [] : result.cones.map(c => {
+        const cone = { index: c.index, type: c.type, x: round(c.x, 3), y: round(c.y, 3),
+                       heading: c.type === "standing" ? 0 : round(c.heading, 2), element: c.element }
+        if (c.edited)
+            cone.edited = true
+        return cone
+    })
     const design = Commands.clone(track)
     design.photo = { kind: track.photo.kind, metresPerPixel: scale }
     return { format: FORMAT, version: VERSION, name: info.name, app: info.app, saved: info.saved, units: UNITS,
@@ -104,6 +111,46 @@ function readElement(v) {
             return null
     }
     return { id: v.id, type: v.type, x: v.x, y: v.y, rotation: v.rotation, props: props, joins: joins }
+}
+
+// A cone of a touched-up list, or null when it cannot be read.
+function readCone(v) {
+    if (!isObject(v) || ["standing", "leaning"].indexOf(v.type) < 0 || !isNumber(v.x) || !isNumber(v.y) || !isNumber(v.heading))
+        return null
+    if (v.element !== null && typeof v.element !== "string")
+        return null
+    return { type: v.type, x: v.x, y: v.y, heading: v.heading, element: v.element, edited: v.edited === true }
+}
+
+// The design's touch-ups ({ placed, cones }), or null when they cannot be read.
+function readTouchUps(v) {
+    if (!isObject(v) || !Array.isArray(v.cones) || !isNumber(v.placed))
+        return null
+    const cones = []
+    for (const c of v.cones) {
+        const cone = readCone(c)
+        if (!cone)
+            return null
+        cones.push(cone)
+    }
+    return { placed: Math.max(0, Math.round(v.placed)), cones: cones }
+}
+
+// Joined ends a hand edit has left slightly apart (up to JOIN_SLACK, see repairJoins) are glued exactly, so the next
+// edit does not quietly unjoin them. A file the app saved itself has every joint together and is left untouched.
+function glueNearJoins(elements) {
+    const apart = elements.some(el => ["A", "B"].some(end => {
+        const j = el.joins[end]
+        if (!j)
+            return false
+        const a = Elements.endsWorld(el)[end]
+        const b = Elements.endsWorld(elements.find(e => e.id === j.id))[j.end]
+        return Math.hypot(a.x - b.x, a.y - b.y) >= 1e-6
+    }))
+    if (apart) {
+        Snapping.glueAll(elements)
+        Snapping.unjoinApart(elements)
+    }
 }
 
 // Joins a hand edit has made impossible: ends more than JOIN_SLACK apart, or a line (lines are never joined). Both
@@ -169,15 +216,31 @@ function readDesign(d) {
     if (elements.length > 0 && !(scale > 0))
         return null
     repairJoins(elements)
+    glueNearJoins(elements)
+    let density = Density.STANDARD
+    if (d.density !== undefined) {
+        if (Density.NOTCHES.indexOf(d.density) < 0)
+            return null
+        density = d.density
+    }
+    let touchUps = null
+    if (d.touchUps !== null && d.touchUps !== undefined) {
+        touchUps = readTouchUps(d.touchUps)
+        if (!touchUps)
+            return null
+    }
     let nextId = isNumber(d.nextId) ? Math.max(1, Math.floor(d.nextId)) : 1
     for (const el of elements) {
         const m = /^e(\d+)$/.exec(el.id)
         if (m)
             nextId = Math.max(nextId, Number(m[1]) + 1)
     }
-    return { photo: { kind: d.photo.kind, ref: null, metresPerPixel: scale }, ruler: ruler,
-             targets: { origin: origin, direction: direction }, elements: elements, nextId: nextId,
-             density: 3, touchUps: null }
+    const track = { photo: { kind: d.photo.kind, ref: null, metresPerPixel: scale }, ruler: ruler,
+                    targets: { origin: origin, direction: direction }, elements: elements, nextId: nextId,
+                    density: density, touchUps: touchUps }
+    if (touchUps && Post.check(track))
+        return null                                          // touch-ups on a track that cannot be processed
+    return track
 }
 
 // A track from a parsed document whose photo TrackFile has already taken out: { track, warning } or { error }.

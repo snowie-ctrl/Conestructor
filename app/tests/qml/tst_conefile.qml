@@ -3,6 +3,7 @@ import QtTest
 import "../../qml/logic/commands.mjs" as Commands
 import "../../qml/logic/conefile.mjs" as ConeFile
 import "../../qml/logic/demo.mjs" as Demo
+import "../../qml/logic/elements.mjs" as Elements
 import "fixtures/schemacheck.mjs" as SchemaCheck
 
 TestCase {
@@ -197,5 +198,85 @@ TestCase {
         compare(JSON.stringify(ConeFile.fromDocument(d, -1).track), JSON.stringify(t))
         compare(d.cones.filter(c => c.element === "e5").length, 7)
         compare(d.cones.slice(-7).map(c => c.element).join(","), "e5,e5,e5,e5,e5,e5,e5")
+    }
+
+    function touchedUp() {
+        const s = new Commands.UndoStack()
+        let t = Demo.demoTrack()
+        t = Commands.run(s, t, "deleteCones", { indices: [0] })
+        t = Commands.run(s, t, "moveCone", { index: 1, x: 40, y: 40 })
+        t = Commands.run(s, t, "addCone", { x: 5, y: 6 })
+        return t
+    }
+
+    function test_theFileHoldsTheTouchedUpCones() {
+        const t = touchedUp()
+        const d = doc(t)
+        compare(d.cones.length, t.touchUps.cones.length)
+        d.cones.forEach((c, i) => compare(c.index, i))
+        compare(d.cones[1].edited, true)
+        verify(!("edited" in d.cones[0]), "an untouched cone carries no edited field")
+        const last = d.cones[d.cones.length - 1]
+        compare(last.element, null)
+        compare(last.edited, true)
+        compare(last.heading, 0)
+        d.photo = null                                   // TrackFile adds the photo last
+        compare(SchemaCheck.problems(schema, d).join("; "), "")
+    }
+
+    function test_aTouchedUpTrackComesBackLocked() {
+        const t = touchedUp()
+        const back = ConeFile.fromDocument(doc(t), -1).track
+        compare(JSON.stringify(back), JSON.stringify(t))
+        verify(Commands.locked(back))
+    }
+
+    function test_densityRoundTrips() {
+        const t = Commands.run(new Commands.UndoStack(), Demo.demoTrack(), "setDensity", { notch: 5 })
+        compare(ConeFile.fromDocument(doc(t), -1).track.density, 5)
+        const old = doc(Demo.demoTrack())
+        delete old.design.density
+        delete old.design.touchUps
+        const back = ConeFile.fromDocument(old, -1).track
+        compare(back.density, 3)
+        compare(back.touchUps, null)
+    }
+
+    function test_badDensityOrTouchUpsAreDamaged_data() {
+        return [
+            { tag: "density 7", change: d => { d.design.density = 7 } },
+            { tag: "density text", change: d => { d.design.density = "most" } },
+            { tag: "touchUps not an object", change: d => { d.design.touchUps = "x" } },
+            { tag: "cones not a list", change: d => { d.design.touchUps.cones = {} } },
+            { tag: "no placed count", change: d => { delete d.design.touchUps.placed } },
+            { tag: "unknown cone type", change: d => { d.design.touchUps.cones[0].type = "flat" } },
+            { tag: "cone without x", change: d => { delete d.design.touchUps.cones[0].x } },
+            { tag: "element a number", change: d => { d.design.touchUps.cones[0].element = 4 } }
+        ]
+    }
+    function test_badDensityOrTouchUpsAreDamaged(row) {
+        const d = doc(touchedUp())
+        row.change(d)
+        compare(ConeFile.fromDocument(d, -1).error, ConeFile.MESSAGES.damaged)
+    }
+
+    // Review focus 4: touch-ups on a design that cannot be processed would open locked with no cones to show.
+    function test_touchUpsNeedATrackThatCanBeProcessed() {
+        const d = doc(touchedUp())
+        d.design.targets.direction = null
+        compare(ConeFile.fromDocument(d, -1).error, ConeFile.MESSAGES.damaged)
+    }
+
+    // Part 3's minor: joined ends a little apart in a hand-edited file are glued on open, so the next edit keeps them.
+    function test_joinsSlightlyApartAreGluedOnOpen() {
+        const d = joinedDoc()
+        d.design.elements[1].x += 0.02
+        const t = ConeFile.fromDocument(d, -1).track
+        compare(t.elements[0].joins.B.id, "e2")
+        const a = Elements.endsWorld(t.elements[0]).B
+        const b = Elements.endsWorld(t.elements[1]).A
+        verify(Math.hypot(a.x - b.x, a.y - b.y) < 1e-6, "glued exactly")
+        const after = Commands.run(new Commands.UndoStack(), t, "setProp", { id: t.elements[0].id, key: "trackWidth", value: 5 })
+        compare(after.elements[0].joins.B.id, "e2")
     }
 }
