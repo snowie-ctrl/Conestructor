@@ -96,10 +96,16 @@ QtObject {
     signal trackReplaced()
 
     function setTrack(t) {
-        const before = track.touchUps ? track.touchUps.cones.length : -1
-        const after = t.touchUps ? t.touchUps.cones.length : -1
-        if (after !== before && coneSelection.length > 0)
-            coneSelection = []          // the positions would name other cones
+        // The picked cones are positions in the placed list. They still name the same cones only while the touched-up list
+        // keeps its length, and when the first touch-up freezes the very list on show without changing its length (a
+        // move, retype or turn). Any other change (a delete, an add, undoing past the first touch-up, or a change to an
+        // untouched track, which places its cones again) would make them name other cones.
+        const before = track.touchUps
+        const after = t.touchUps
+        const samePositions = before ? after && after.cones.length === before.cones.length
+                            : after && after.cones.length === after.placed
+        if (!samePositions && coneSelection.length > 0)
+            coneSelection = []
         track = t
         const kept = selection.filter(id => exists(id))
         if (kept.length !== selection.length)

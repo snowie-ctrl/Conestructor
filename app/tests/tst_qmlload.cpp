@@ -2180,6 +2180,49 @@ private slots:
         settings->setProperty("units", units);
     }
 
+    // Final review: the first touch-up of a round keeps the cone selected (typing its x types all of it, the panel stays
+    // for Pointing after Make leaning); a change to the track before any touch-up drops a selection that would now name
+    // another cone.
+    void theFirstTouchUpKeepsTheConeSelected()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        const QString units = settings->property("units").toString();
+        settings->setProperty("units", QStringLiteral("m"));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        const int placed = w.cones().size();
+
+        w.click(w.conePoint(0));
+        QQuickItem *x = textBox(findField(w.window, QStringLiteral("Position x")));
+        QVERIFY(x);
+        x->forceActiveFocus();
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("12"));
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QVERIFY(w.store->property("locked").toBool());
+        QCOMPARE(plain(w.store->property("coneSelection")).toList(), QVariantList{ 0 });
+        const QVariantList frame = plain(w.store->property("preview")).toMap().value("cones").toList();
+        QVERIFY2(qAbs(frame.value(0).toMap().value("x").toDouble() - 12) < 1e-6,
+                 qPrintable(QString::number(frame.value(0).toMap().value("x").toDouble())));
+        QVERIFY(findText(w.window, QStringLiteral("Cone 1 of %1").arg(placed)));
+
+        QMetaObject::invokeMethod(w.store, "undo");              // back to an untouched round
+        QVERIFY(!w.store->property("locked").toBool());
+        w.click(w.conePoint(0));
+        w.clickItem(findButton(w.window, QStringLiteral("Leaning")));
+        QCOMPARE(w.label(), QStringLiteral("Make leaning"));
+        QCOMPARE(plain(w.store->property("coneSelection")).toList(), QVariantList{ 0 });
+        QVERIFY(findField(w.window, QStringLiteral("Pointing")));
+
+        QMetaObject::invokeMethod(w.store, "undo");
+        w.click(w.conePoint(0));
+        QCOMPARE(plain(w.store->property("coneSelection")).toList(), QVariantList{ 0 });
+        w.run(QStringLiteral("setDensity"), { { "notch", 5 } });   // the placed cones are now other cones
+        QVERIFY(plain(w.store->property("coneSelection")).toList().isEmpty());
+        settings->setProperty("units", units);
+    }
+
     // Part 3's minor 2: "Type its length" brings the focus back to an open length box; Esc on the canvas closes it.
     void theLengthBoxComesBackToFocus()
     {
