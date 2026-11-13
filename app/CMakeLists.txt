@@ -47,6 +47,8 @@ qt_add_qml_module(conestructor_core
         qml/CoachCard.qml
         qml/ConesBox.qml
         qml/CarOutline.qml
+        qml/TeamTracksDialog.qml
+        qml/UploadDialog.qml
         qml/logic/units.mjs
         qml/logic/conerows.mjs
         qml/logic/elements.mjs

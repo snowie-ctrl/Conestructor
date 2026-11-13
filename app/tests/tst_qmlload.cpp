@@ -1,5 +1,7 @@
 #include <QQmlApplicationEngine>
 #include <QDir>
+#include <QDateTime>
+#include <QFileInfo>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QColor>
@@ -2424,6 +2426,185 @@ private slots:
         QMetaObject::invokeMethod(w.window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
         QMetaObject::invokeMethod(w.store, "uploadResult", Q_RETURN_ARG(QVariant, result));
         QVERIFY(plain(result).toMap().value(QStringLiteral("cones")).toList().size() > 40);
+    }
+
+    // Part 5: without a team code, both team items open Preferences at the Team section with a line saying why.
+    void theTeamItemsNeedACode()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("preferencesDialog"));
+        for (const char *action : { "openFromTeam", "uploadToTeam" }) {
+            QMetaObject::invokeMethod(w.window, action);
+            QTRY_VERIFY(dialog->property("opened").toBool());
+            QQuickItem *hint = w.named(QStringLiteral("teamHint"));
+            QVERIFY(hint && hint->isVisible());
+            QCOMPARE(hint->property("text").toString(), QStringLiteral("Paste your team code to use team tracks."));
+            QMetaObject::invokeMethod(dialog, "close");
+            QTRY_VERIFY(!dialog->property("visible").toBool());
+        }
+        QVERIFY(!w.window->findChild<QObject *>(QStringLiteral("teamTracksDialog"))->property("visible").toBool());
+        QVERIFY(!w.window->findChild<QObject *>(QStringLiteral("uploadDialog"))->property("visible").toBool());
+    }
+
+    // Part 5: Upload to team draws a thumbnail, asks for a name (an Untitled track has none yet), sends the track once
+    // however often Enter is pressed, and says so in the status bar. Review focus 5.
+    void uploadingToTheTeam()
+    {
+        FakeHttp server;
+        server.replyJson("POST", "/api/cone/tracks", 201, R"({"status": "ok", "id": 12})");
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        QMetaObject::invokeMethod(w.window, "uploadToTeam");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("uploadDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *name = w.named(QStringLiteral("uploadName"));
+        QQuickItem *button = w.named(QStringLiteral("uploadButton"));
+        QCOMPARE(name->property("text").toString(), QString());
+        QVERIFY(!button->isEnabled());
+        const QUrl thumbnail = w.named(QStringLiteral("uploadThumbnail"))->property("source").toUrl();
+        QVERIFY(QFileInfo::exists(thumbnail.toLocalFile()));
+        QVERIFY(w.named(QStringLiteral("uploadQuestion"))->property("text").toString()
+                    .contains(QStringLiteral("cones) to Our team? Teammates will be able to open it.")));
+
+        w.clickItem(name);
+        typeText(w.window, QStringLiteral("Duck pond wet"));
+        QVERIFY(button->isEnabled());
+        QTest::keyClick(w.window, Qt::Key_Return);
+        QTest::keyClick(w.window, Qt::Key_Return);             // a second Enter while it sends does nothing
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+        QCOMPARE(server.count("/api/cone/tracks"), 1);
+        const FakeRequest sent = server.requests.last();
+        QVERIFY(sent.headers.value("content-type").startsWith("multipart/form-data"));
+        QCOMPARE(sent.headers.value("x-team-key"), QByteArray("test-key"));
+        QVERIFY(sent.body.contains("\"name\": \"Duck pond wet\""));
+        QVERIFY(sent.body.contains("name=\"thumbnail\""));
+        QCOMPARE(w.store->property("message").toString(), QStringLiteral("Uploaded Duck pond wet to Our team"));
+        QCOMPARE(w.store->property("filePath").toString(), QString());
+        QVERIFY(!w.store->property("dirty").toBool());
+    }
+
+    void aRefusedUploadSaysWhyAndStaysOpen()
+    {
+        FakeHttp server;
+        server.replyJson("POST", "/api/cone/tracks", 400, R"({"status": "error", "message": "not a track file"})");
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        QMetaObject::invokeMethod(w.window, "uploadToTeam");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("uploadDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        w.clickItem(w.named(QStringLiteral("uploadName")));
+        typeText(w.window, QStringLiteral("Lot"));
+        w.clickItem(w.named(QStringLiteral("uploadButton")));
+        QTRY_COMPARE(w.named(QStringLiteral("uploadError"))->property("text").toString(),
+                     QStringLiteral("The server refused the track: not a track file."));
+        QVERIFY(dialog->property("visible").toBool());
+    }
+
+    // Part 5: Open from team asks about unsaved changes first, lists the team's tracks with their thumbnails, and opens
+    // the chosen one with no file.
+    void openingFromTheTeam()
+    {
+        FakeHttp server;
+        Loaded w;
+        QVERIFY(w.load(true));
+        QVariant text;
+        QMetaObject::invokeMethod(w.store, "documentText", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, QStringLiteral("Duck pond")));
+        server.reply("GET", "/api/cone/tracks/12/file",
+                     FakeReply{ 200, "application/json", TrackFile::documentBytes(text.toString(), nullptr, -1) });
+        server.replyJson("GET", "/api/cone/tracks", 200,
+                         R"({"status": "ok", "tracks": [{"id": 12, "name": "Duck pond", "cones": 57,
+                             "uploaded": "2026-11-12T14:02:00Z", "bytes": 3000}]})");
+        QImage small(40, 30, QImage::Format_RGB32);
+        small.fill(Qt::gray);
+        server.reply("GET", "/api/cone/tracks/12/thumbnail", FakeReply{ 200, "image/jpeg", TeamServer::jpeg(small) });
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        const QStringList recent = settings->property("recentFiles").toStringList();
+
+        w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+        QMetaObject::invokeMethod(w.window, "openFromTeam");
+        QObject *unsaved = w.window->findChild<QObject *>(QStringLiteral("unsavedDialog"));
+        QTRY_VERIFY(unsaved->property("opened").toBool());
+        w.clickItem(findButton(w.window, QStringLiteral("Don't save")));
+
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("teamTracksDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QCOMPARE(dialog->property("title").toString(), QStringLiteral("Team tracks: Our team"));
+        QTRY_VERIFY(findText(w.window, QStringLiteral("Duck pond")));
+        const QString when = QDateTime::fromString(QStringLiteral("2026-11-12T14:02:00Z"), Qt::ISODate).toLocalTime()
+                                 .toString(QStringLiteral("d MMM yyyy HH:mm"));
+        QVERIFY(findText(w.window, QStringLiteral("57 cones · ") + when));
+        QTRY_VERIFY(!plain(dialog->property("thumbs")).toMap().isEmpty());
+        w.clickItem(w.named(QStringLiteral("teamOpenButton")));
+        QTRY_COMPARE(w.window->title(), QStringLiteral("Conestructor 0.6 — Duck pond (from team)"));
+        QVERIFY(!dialog->property("visible").toBool());
+        QVERIFY(!w.store->property("dirty").toBool());
+        QCOMPARE(settings->property("recentFiles").toStringList(), recent);
+        QCOMPARE(w.store->property("elementCount").toInt(), 4);
+    }
+
+    void theTeamListSaysWhatIsWrong()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), FakeHttp::closedPort()));
+        QMetaObject::invokeMethod(w.window, "openFromTeam");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("teamTracksDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *status = w.named(QStringLiteral("teamTracksStatus"));
+        QCOMPARE(status->property("text").toString(), QStringLiteral("Connecting…"));
+        QTRY_COMPARE_WITH_TIMEOUT(status->property("text").toString(),
+                                  QStringLiteral("Can't reach the team server (tried the internet)."), 20000);
+
+        FakeHttp server;
+        server.replyJson("GET", "/api/cone/tracks", 200, R"({"status": "ok", "tracks": []})");
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        w.clickItem(w.named(QStringLiteral("teamRefreshButton")));
+        QTRY_COMPARE(status->property("text").toString(),
+                     QStringLiteral("No tracks on the team yet. File › Upload to team shares the open track."));
+        QVERIFY(!w.named(QStringLiteral("teamOpenButton"))->isEnabled());
+    }
+
+    // Review focus 4: closing the list during a download stops it; nothing opens later, and the list comes back.
+    void aDownloadStopsWhenTheDialogCloses()
+    {
+        FakeHttp server;
+        server.replyJson("GET", "/api/cone/tracks", 200,
+                         R"({"status": "ok", "tracks": [{"id": 12, "name": "Duck pond", "cones": 57,
+                             "uploaded": "2026-11-12T14:02:00Z", "bytes": 3000}]})");
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        QObject *team = w.engine.singletonInstance<QObject *>("Conestructor", "TeamServer");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        QMetaObject::invokeMethod(w.window, "openFromTeam");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("teamTracksDialog"));
+        QTRY_VERIFY(findText(w.window, QStringLiteral("Duck pond")));
+        server.silent = true;                                  // the download never answers
+        w.clickItem(w.named(QStringLiteral("teamOpenButton")));
+        QTRY_VERIFY(team->property("busy").toBool());
+        QTest::keyClick(w.window, Qt::Key_Escape);
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+        QTRY_VERIFY(!team->property("busy").toBool());
+        QTest::qWait(300);
+        QCOMPARE(w.window->title(), QStringLiteral("Conestructor 0.6 — Untitled"));
+
+        server.silent = false;
+        QMetaObject::invokeMethod(w.window, "openFromTeam");
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QTRY_VERIFY(findText(w.window, QStringLiteral("Duck pond")));
+        QVERIFY(w.named(QStringLiteral("teamOpenButton"))->isEnabled());
     }
 };
 

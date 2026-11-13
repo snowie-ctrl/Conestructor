@@ -110,6 +110,33 @@ ApplicationWindow {
         whenSaved(() => window.openTrack(path))
     }
 
+    readonly property string noCodeHint: qsTr("Paste your team code to use team tracks.")
+
+    // File › Open from team: asks about unsaved changes first; without a team code, Preferences at Team.
+    function openFromTeam() {
+        if (!TeamServer.hasCode) {
+            preferences.openAtTeam(noCodeHint)
+            return
+        }
+        whenSaved(() => teamTracksDialog.openList())
+    }
+
+    // File › Upload to team: the track must process; it is sent as it is now, with no save first.
+    function uploadToTeam() {
+        if (!TeamServer.hasCode) {
+            preferences.openAtTeam(noCodeHint)
+            return
+        }
+        const result = TrackStore.uploadResult()
+        if (result)
+            uploadDialog.ask(result)
+    }
+
+    function openTeamTrack(read, name) {
+        if (TrackStore.openFromTeam(read, name))
+            fitSoon()
+    }
+
     onClosing: (close) => {
         if (closing || !TrackStore.dirty) {
             if (backupAnswered)
@@ -233,6 +260,7 @@ ApplicationWindow {
             title: qsTr("&File")
             Action { text: qsTr("&New"); shortcut: StandardKey.New; onTriggered: window.newTrack() }
             Action { text: qsTr("&Open…"); shortcut: StandardKey.Open; onTriggered: window.chooseTrack() }
+            Action { text: qsTr("Open from &team…"); shortcut: "Ctrl+Shift+O"; onTriggered: window.openFromTeam() }
             Menu {
                 id: recentMenu
                 title: qsTr("Open &Recent")
@@ -252,6 +280,8 @@ ApplicationWindow {
             }
             Action { text: qsTr("&Save"); shortcut: StandardKey.Save; onTriggered: window.save(null) }
             Action { text: qsTr("Save &As…"); shortcut: "Ctrl+Shift+S"; onTriggered: window.saveAs(null) }
+            MenuSeparator {}
+            Action { text: qsTr("&Upload to team…"); onTriggered: window.uploadToTeam() }
             MenuSeparator {}
             Action { text: qsTr("Load lot photo…"); onTriggered: photoDialog.open() }
             MenuSeparator {}
@@ -566,4 +596,14 @@ ApplicationWindow {
     }
 
     PreferencesDialog { id: preferences }
+
+    TeamTracksDialog {
+        id: teamTracksDialog
+        onOpenTrack: (read, name) => window.openTeamTrack(read, name)
+    }
+
+    UploadDialog {
+        id: uploadDialog
+        onSent: (name) => TrackStore.message = qsTr("Uploaded %1 to %2").arg(name).arg(TeamServer.teamName)
+    }
 }
