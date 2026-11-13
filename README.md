@@ -1,11 +1,12 @@
 # Conestructor
 
-> **v1 in progress.** Parts 1 to 4 of 6 are done: the core canvas (metres underneath, zoom and pan, undo, units, cone
+> **v1 in progress.** Parts 1 to 5 of 6 are done: the core canvas (metres underneath, zoom and pan, undo, units, cone
 > preview); setup and track files (a setup checklist, `.cone` files with the photo inside, direction arrows, Reverse
 > direction, typed rotation, multi-select); ease of use (a coach card through setup, click-to-place, gate nodes that
-> pivot and stretch, a fold warning, turns up to 360°, a line tool for walls); and cones (a density slider with five
+> pivot and stretch, a fold warning, turns up to 360°, a line tool for walls); cones (a density slider with five
 > notches and per-element overrides, outside cones on turns, the cone count against the cones the team owns, touch-ups
-> of single cones after placing them, a true-size car outline). A full guide comes with v1.0.0.
+> of single cones after placing them, a true-size car outline); and team tracks (a team server, a team code in
+> Preferences, Upload to team and Open from team). A full guide comes with v1.0.0.
 
 Conestructor is a desktop app for designing Formula SAE autocross tracks ahead of time. You lay track elements
 (straights, slaloms, chicanes, turns, and lines for walls) over a birdseye photo of the lot. A ruler sets the
@@ -29,10 +30,18 @@ for cone in track["cones"]:
     print(cone["index"], cone["type"], cone["x"], cone["y"], cone["heading"])
 ```
 
+## Team tracks
+
+A team can share its tracks through a small server (`server/`: Flask and MySQL, behind nginx). Paste the team code your
+team's admin gives you into Edit › Preferences › Team; File › Upload to team then shares the open track, and
+File › Open from team lists the team's tracks, each with a thumbnail. The app tries the server on the local network
+first, then over the internet. Treat the team code like a password: whoever has it can open your team's tracks and add
+to them. Without a code the app works fully on its own. Running the server: [server/README.md](server/README.md).
+
 ## Build
 
-Qt 6.8 or newer (Quick, Quick Controls, Shapes, Svg), CMake 3.16+, a C++17 compiler. Open `app/CMakeLists.txt` in
-Qt Creator and run, or on Windows with Qt 6.11 and MSVC 2022:
+Qt 6.8 or newer (Quick, Quick Controls, Shapes, Svg, Network), CMake 3.16+, a C++17 compiler. Open
+`app/CMakeLists.txt` in Qt Creator and run, or on Windows with Qt 6.11 and MSVC 2022:
 
     powershell -File app\tests\build.ps1     # app and tests
     powershell -File app\tests\run.ps1       # C++ tests, then the logic tests
@@ -44,11 +53,12 @@ The scripts default to the maintainer's install paths; set `CONESTRUCTOR_QT`, `C
 
 - `app/`: the desktop app. `qml/logic/` holds the geometry and the file format as plain JavaScript modules (elements,
   snapping, the export frame, post-processing, units, undo, the `.cone` document); `qml/` draws it; `services/` is a
-  little C++ (settings, photos, track files).
+  little C++ (settings, photos, track files, the team server).
 - `app/tests/`: C++ tests (Qt Test) and logic tests (`tests/qml`, qmltestrunner), including a check that the cone
   placement matches the prototype's.
 - `docs/cone-format.md`, `docs/cone-format.schema.json`: the track file format for other apps.
-- `coneRoutes.py`: the server's Flask routes for uploaded tracks (moves to `server/` in part 5).
+- `server/`: the team server (Flask blueprints for the team API and the LAN-only admin API, the schema, the admin
+  script, a smoke test and a live check), tested with pytest.
 - `docs/superpowers/`: the v1 specs and plans.
 
 ## Licence
