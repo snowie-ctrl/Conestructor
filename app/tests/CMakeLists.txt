@@ -12,9 +12,10 @@ function(conestructor_test name)
 endfunction()
 
 conestructor_test(tst_qmlload
-    SOURCES tst_qmlload.cpp
+    SOURCES tst_qmlload.cpp fakehttp.h
     LIBS conestructor_coreplugin Qt6::Qml Qt6::Quick Qt6::QuickControls2)
 
 conestructor_test(tst_settings SOURCES tst_settings.cpp LIBS conestructor_core)
 conestructor_test(tst_trackfile SOURCES tst_trackfile.cpp LIBS conestructor_core)
 conestructor_test(tst_photostore SOURCES tst_photostore.cpp LIBS conestructor_core)
+conestructor_test(tst_teamserver SOURCES tst_teamserver.cpp fakehttp.h LIBS conestructor_core)

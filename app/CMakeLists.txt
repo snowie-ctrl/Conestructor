@@ -68,6 +68,7 @@ qt_add_qml_module(conestructor_core
         services/Settings.h services/Settings.cpp
         services/TrackFile.h services/TrackFile.cpp
         services/PhotoStore.h services/PhotoStore.cpp
+        services/TeamServer.h services/TeamServer.cpp
     RESOURCES
         assets/images/blueprintBackground.png
         assets/images/crosshair.svg
