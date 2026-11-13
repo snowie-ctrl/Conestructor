@@ -133,3 +133,7 @@ def adminClient(adminRoutes):
 @pytest.fixture
 def anonAdminClient(adminRoutes):
     return appClient(adminRoutes.coneAdminBP, "/api/cone-admin", {})
+
+
+# liveCheck.py imports coneRules as a plain module, as it does when run from server\.
+sys.path.insert(0, str(SERVER))
