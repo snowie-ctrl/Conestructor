@@ -107,3 +107,29 @@ def anonClient(teamRoutes):
 def teamClient(teamRoutes):
     """The team API sending KEY; queue TEAM first in useDb's fetchone for the key lookup."""
     return appClient(teamRoutes.coneBP, "/api/cone", {"HTTP_X_TEAM_KEY": KEY})
+
+
+def writeConfig(admin, path, fields):
+    """Writes coneAdminConfig.json for the admin routes and makes them read it again."""
+    path.write_text(json.dumps(fields), encoding="utf-8")
+    admin.CONFIG_FILE = path
+    admin._configCache.update({"mtime": None, "config": {}})
+
+
+@pytest.fixture
+def adminRoutes(monkeypatch, tmp_path):
+    admin = loadModule("coneAdminRoutes")
+    path = tmp_path / "coneAdminConfig.json"
+    monkeypatch.setattr(admin, "CONFIG_FILE", path)
+    writeConfig(admin, path, {"token": ADMIN_TOKEN, "lanBase": LAN, "publicBase": PUBLIC})
+    return admin
+
+
+@pytest.fixture
+def adminClient(adminRoutes):
+    return appClient(adminRoutes.coneAdminBP, "/api/cone-admin", {"HTTP_X_ADMIN_TOKEN": ADMIN_TOKEN})
+
+
+@pytest.fixture
+def anonAdminClient(adminRoutes):
+    return appClient(adminRoutes.coneAdminBP, "/api/cone-admin", {})
