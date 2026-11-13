@@ -14,7 +14,8 @@ class PhotoStore;
 // this adds the photo last as base64 and writes through a temporary file, so a failed save leaves the old file as it
 // was. Opening takes the photo out into the PhotoStore before QML reads the rest. Also the autosave backup, kept
 // beside Conestructor.ini; one running Conestructor owns it at a time (autosave.lock), so a second window neither
-// offers, overwrites nor deletes the first one's backup.
+// offers, overwrites nor deletes the first one's backup. The same bytes are what File › Upload to team sends, and a
+// track downloaded from the team opens from its bytes as a file does.
 class TrackFile : public QObject
 {
     Q_OBJECT
@@ -51,6 +52,11 @@ public:
 
     static QString saveTo(const QString &path, const QString &documentText, const PhotoStore *photos, int photoRef);
     static QVariantMap openFrom(const QString &path, PhotoStore *photos);
+    // The whole file as saveTo writes it: the document's text with the photo added last; empty when the text is not a
+    // JSON object.
+    static QByteArray documentBytes(const QString &documentText, const PhotoStore *photos, int photoRef);
+    // As openFrom, from a file's bytes (a track downloaded from the team).
+    static QVariantMap openBytes(const QByteArray &bytes, PhotoStore *photos);
     // The folder holding Conestructor.ini (%APPDATA%\Conestructor).
     static QString backupDir();
 

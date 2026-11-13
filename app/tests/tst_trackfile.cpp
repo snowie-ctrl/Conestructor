@@ -108,6 +108,34 @@ private slots:
         QVERIFY(!opened.value(QStringLiteral("photoError")).toBool());
     }
 
+    // Part 5: an upload sends exactly what Save writes, and a download opens as a file from disk does.
+    void theFilesBytesAreWhatSaveWrites()
+    {
+        PhotoStore photos(nullptr);
+        const int ref = photos.add(png(QSize(32, 24)));
+        const QString path = dir.filePath(QStringLiteral("Bytes.cone"));
+        QCOMPARE(TrackFile::saveTo(path, document(), &photos, ref), QString());
+        QCOMPARE(TrackFile::documentBytes(document(), &photos, ref), read(path));
+        QCOMPARE(TrackFile::saveTo(path, document(), nullptr, -1), QString());
+        QCOMPARE(TrackFile::documentBytes(document(), nullptr, -1), read(path));
+        QVERIFY(TrackFile::documentBytes(QStringLiteral("not an object"), &photos, ref).isEmpty());
+    }
+
+    void bytesOpenAsAFileDoes()
+    {
+        PhotoStore source(nullptr);
+        const QByteArray picture = png(QSize(32, 24));
+        const QByteArray bytes = TrackFile::documentBytes(document(), &source, source.add(picture));
+        PhotoStore photos(nullptr);
+        const QVariantMap opened = TrackFile::openBytes(bytes, &photos);
+        QVERIFY(!opened.contains(QStringLiteral("error")));
+        QCOMPARE(photos.bytes(opened.value(QStringLiteral("photoRef")).toInt()), picture);
+        const QJsonObject text = QJsonDocument::fromJson(opened.value(QStringLiteral("text")).toString().toUtf8()).object();
+        QCOMPARE(text.value(QStringLiteral("name")).toString(), QStringLiteral("Lot"));
+        QVERIFY(!text.contains(QStringLiteral("photo")));
+        QCOMPARE(TrackFile::openBytes("hello", &photos).value(QStringLiteral("error")).toString(), QStringLiteral("notJson"));
+    }
+
     void notJsonIsRefused()
     {
         const QString path = dir.filePath(QStringLiteral("notes.cone"));

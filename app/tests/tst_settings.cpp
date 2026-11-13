@@ -186,6 +186,48 @@ private slots:
 
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
     }
+    void theTeamCodeSurvivesARestart()
+    {
+        {
+            Settings s;
+            QCOMPARE(s.teamCode(), QString());
+            QSignalSpy changed(&s, &Settings::teamCodeChanged);
+            s.setTeamCode(QStringLiteral("  CONE1.abc \n"));
+            QCOMPARE(s.teamCode(), QStringLiteral("CONE1.abc"));
+            QCOMPARE(changed.count(), 1);
+            s.setTeamCode(QStringLiteral("CONE1.abc"));
+            QCOMPARE(changed.count(), 1);
+        }
+        Settings again;
+        QCOMPARE(again.teamCode(), QStringLiteral("CONE1.abc"));
+        QCOMPARE(ini().value("teamCode").toString(), QStringLiteral("CONE1.abc"));
+    }
+
+    // Part 4's minor 4: a hand-edited number is checked and kept within its limits before it becomes a whole number.
+    void hugeAndNonFiniteNumbersInTheFileAreSafe()
+    {
+        {
+            QSettings settings = ini();
+            settings.setValue("conesOwned", "1e20");
+            settings.setValue("carLength", "nan");
+            settings.setValue("carWidth", "1e300");
+            settings.sync();
+        }
+        Settings s;
+        QCOMPARE(s.conesOwned(), Settings::maxConesOwned);
+        QCOMPARE(s.carLength(), Settings::defaultCarLength);
+        QCOMPARE(s.carWidth(), Settings::maxCarSize);
+        {
+            QSettings settings = ini();
+            settings.setValue("conesOwned", "inf");
+            settings.setValue("carLength", "-inf");
+            settings.sync();
+        }
+        Settings again;
+        QCOMPARE(again.conesOwned(), 0);
+        QCOMPARE(again.carLength(), Settings::defaultCarLength);
+    }
+
     void recentFilesAreNewestFirstAndAtMostEight()
     {
         Settings s;

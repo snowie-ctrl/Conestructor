@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Conestructor VERSION 0.5.0 LANGUAGES CXX)
+project(Conestructor VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg Network)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
@@ -81,7 +81,7 @@ target_compile_definitions(conestructor_core PUBLIC
     CONESTRUCTOR_VERSION="${PROJECT_VERSION}"
     CONESTRUCTOR_BACKGROUNDS="${CONESTRUCTOR_BACKGROUND_LIST}"
 )
-target_link_libraries(conestructor_core PUBLIC Qt6::Quick Qt6::QuickControls2)
+target_link_libraries(conestructor_core PUBLIC Qt6::Quick Qt6::QuickControls2 Qt6::Network)
 
 qt_add_executable(appConestructor main.cpp)
 target_link_libraries(appConestructor PRIVATE conestructor_coreplugin conestructor_core Qt6::Quick Qt6::QuickControls2 Qt6::Svg)

@@ -270,7 +270,7 @@ private slots:
         QCOMPARE(engine.rootObjects().size(), 1);
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.6 \u2014 Untitled"));
     }
 
     void theExampleTrackDrawsAndPlacesCones()
@@ -737,7 +737,7 @@ private slots:
         QObject *settings = engine.singletonInstance<QObject *>("Conestructor", "Settings");
         auto *photo = window->findChild<QQuickItem *>(QStringLiteral("photo"));
         QVERIFY(store && settings && photo);
-        const QString dash = QStringLiteral("Conestructor 0.5 \u2014 ");
+        const QString dash = QStringLiteral("Conestructor 0.6 \u2014 ");
 
         QMetaObject::invokeMethod(window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
         QCOMPARE(window->title(), dash + QStringLiteral("Untitled"));
@@ -844,7 +844,7 @@ private slots:
         QTRY_VERIFY(dialog->property("opened").toBool());
         click(QStringLiteral("Don't save"));
         QTRY_COMPARE(store->property("elementCount").toInt(), 0);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Untitled"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.6 \u2014 Untitled"));
 
         // Closing with changes asks too; Don't save closes.
         QMetaObject::invokeMethod(window, "useBlueprint");
@@ -876,7 +876,7 @@ private slots:
         QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
         QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, path));
         QCOMPARE(store->property("elementCount").toInt(), 4);
-        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Start"));
+        QCOMPARE(window->title(), QStringLiteral("Conestructor 0.6 \u2014 Start"));
     }
 
     // Unsaved changes are backed up; at the next start the backup is offered; Discard forgets it; Save removes it.
@@ -921,7 +921,7 @@ private slots:
             click(window, QStringLiteral("Restore"));
             QTRY_COMPARE(store->property("elementCount").toInt(), 4);
             QVERIFY(store->property("dirty").toBool());
-            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.5 \u2014 Untitled*"));
+            QCOMPARE(window->title(), QStringLiteral("Conestructor 0.6 \u2014 Untitled*"));
             QVERIFY(!backup(engine).isEmpty());                      // kept until saved or closed normally
             const QString path = dir.filePath(QStringLiteral("Restored.cone"));
             QVariant ok;

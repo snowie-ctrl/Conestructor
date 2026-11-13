@@ -90,11 +90,11 @@ QVariantMap TrackFile::open(const QString &path)
     return openFrom(path, photos());
 }
 
-QString TrackFile::saveTo(const QString &path, const QString &documentText, const PhotoStore *photos, int photoRef)
+QByteArray TrackFile::documentBytes(const QString &documentText, const PhotoStore *photos, int photoRef)
 {
     QByteArray text = documentText.toUtf8().trimmed();
     if (!text.startsWith('{') || !text.endsWith('}'))
-        return couldNotWrite(path, tr("the track could not be written out"));
+        return {};
     text.chop(1);
     while (!text.isEmpty() && QChar::fromLatin1(text.back()).isSpace())
         text.chop(1);
@@ -107,7 +107,14 @@ QString TrackFile::saveTo(const QString &path, const QString &documentText, cons
                 + ",\n    \"data\": \"" + photos->bytes(photoRef).toBase64() + "\"\n  }";
     }
     text += ",\n  \"photo\": " + photo + "\n}\n";
+    return text;
+}
 
+QString TrackFile::saveTo(const QString &path, const QString &documentText, const PhotoStore *photos, int photoRef)
+{
+    const QByteArray text = documentBytes(documentText, photos, photoRef);
+    if (text.isEmpty())
+        return couldNotWrite(path, tr("the track could not be written out"));
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly))
         return couldNotWrite(path, file.errorString());
@@ -127,8 +134,13 @@ QVariantMap TrackFile::openFrom(const QString &path, PhotoStore *photos)
         return { { QStringLiteral("error"), QStringLiteral("unreadable") },
                  { QStringLiteral("message"),
                    tr("Could not read %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()) } };
+    return openBytes(file.readAll(), photos);
+}
+
+QVariantMap TrackFile::openBytes(const QByteArray &bytes, PhotoStore *photos)
+{
     QJsonParseError error;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &error);
     if (error.error != QJsonParseError::NoError || !doc.isObject())
         return { { QStringLiteral("error"), QStringLiteral("notJson") } };
 

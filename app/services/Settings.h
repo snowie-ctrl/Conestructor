@@ -6,7 +6,7 @@
 
 // The owner's preferences, saved as Conestructor.ini under %APPDATA%\Conestructor (one file to find, read, back up or
 // delete). Part 1 has the units lengths are shown and typed in; part 2 adds the recent files; part 4 adds the cones the
-// team owns and the car outline's size and picture. Files always hold metres
+// team owns and the car outline's size and picture; part 5 adds the team code. Files always hold metres
 // whatever this says.
 class Settings : public QObject
 {
@@ -19,6 +19,7 @@ class Settings : public QObject
     Q_PROPERTY(double carLength READ carLength WRITE setCarLength NOTIFY carLengthChanged)
     Q_PROPERTY(double carWidth READ carWidth WRITE setCarWidth NOTIFY carWidthChanged)
     Q_PROPERTY(QString carImage READ carImage WRITE setCarImage NOTIFY carImageChanged)
+    Q_PROPERTY(QString teamCode READ teamCode WRITE setTeamCode NOTIFY teamCodeChanged)
 
 public:
     explicit Settings(QObject *parent = nullptr);
@@ -51,6 +52,11 @@ public:
     // Whether carImage names a file that is there.
     Q_INVOKABLE bool carImageFound() const;
 
+    // The team code (Preferences › Team): the team server's addresses and the team's key, as the team's admin gave it;
+    // "" for none. Kept without the spaces around it; TeamServer reads it.
+    QString teamCode() const { return m_teamCode; }
+    void setTeamCode(const QString &code);
+
     static constexpr int maxConesOwned = 9999;
     static constexpr double minCarSize = 0.5;
     static constexpr double maxCarSize = 10;
@@ -67,6 +73,7 @@ signals:
     void carLengthChanged();
     void carWidthChanged();
     void carImageChanged();
+    void teamCodeChanged();
     // The ini could not be written; the value still applies for this session.
     void saveFailed(const QString &message);
 
@@ -80,4 +87,5 @@ private:
     double m_carLength = defaultCarLength;
     double m_carWidth = defaultCarWidth;
     QString m_carImage;
+    QString m_teamCode;
 };
