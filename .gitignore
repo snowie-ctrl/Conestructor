@@ -12,8 +12,13 @@ build/
 app/assets/images/duckPondBirdeye.png
 app/assets/images/riverwindBirdeye.png
 
-# The team server's address and keys (part 4)
-app/config/secrets.json
+# The team server's own secrets and the server tests' environment (part 5). The team code lives in
+# Conestructor.ini, never in the repo.
+server/coneAdminConfig.json
+server/coneAdmin.local.json
+server/.venv/
+server/**/__pycache__/
+server/.pytest_cache/
 
 # OS / editor noise
 .DS_Store
