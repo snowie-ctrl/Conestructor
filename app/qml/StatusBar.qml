@@ -28,6 +28,7 @@ Rectangle {
         Label {
             Layout.fillWidth: true
             text: TrackStore.message
+            textFormat: Text.PlainText      // may hold a track name from the team
             elide: Text.ElideRight
             color: "#d0d0d0"
         }

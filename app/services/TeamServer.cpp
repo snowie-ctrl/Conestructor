@@ -219,7 +219,7 @@ QUrl TeamServer::makeThumbnail(int photoRef, double mpp, const QVariantList &con
 
 // ---- Talking to the server ----
 
-QNetworkRequest TeamServer::request(const QUrl &base, const QString &route, int timeout) const
+QNetworkRequest TeamServer::request(const QUrl &base, const QString &route, int timeout, bool withKey) const
 {
     QUrl url = base;
     QString path = url.path();
@@ -227,7 +227,8 @@ QNetworkRequest TeamServer::request(const QUrl &base, const QString &route, int 
         path.chop(1);
     url.setPath(path + QStringLiteral("/api/cone") + route);
     QNetworkRequest r(url);
-    r.setRawHeader("X-Team-Key", m_parsed.key.toUtf8());
+    if (withKey)
+        r.setRawHeader("X-Team-Key", m_parsed.key.toUtf8());
     r.setHeader(QNetworkRequest::UserAgentHeader, QByteArrayLiteral("Conestructor/" CONESTRUCTOR_VERSION));
     r.setTransferTimeout(timeout);
     return r;
@@ -244,7 +245,7 @@ void TeamServer::withServer(const std::function<void(const QUrl &)> &then)
         then(m_base);
         return;
     }
-    QNetworkReply *reply = m_net->get(request(m_parsed.lan, QStringLiteral("/ping"), probeTimeout));
+    QNetworkReply *reply = m_net->get(request(m_parsed.lan, QStringLiteral("/ping"), probeTimeout, false));
     const int generation = m_generation;
     connect(reply, &QNetworkReply::finished, this, [this, reply, then, generation]() {
         reply->deleteLater();
@@ -283,6 +284,8 @@ QString TeamServer::failure(QNetworkReply *reply)
     }
     if (status >= 200 && status < 300)
         return {};
+    if (forgetForeignLan(reply, m_base))
+        return tr("The server had a problem. Try again later.");
     if (status == 401)
         return tr("The team code was not accepted. Check it in Preferences \xE2\x80\xBA Team.");
     if (status == 413)
@@ -293,6 +296,17 @@ QString TeamServer::failure(QNetworkReply *reply)
         return tr("The server refused the track: %1.").arg(message.isEmpty() ? tr("no reason given") : message);
     }
     return tr("The server had a problem. Try again later.");
+}
+
+bool TeamServer::forgetForeignLan(QNetworkReply *reply, const QUrl &base)
+{
+    if (!base.isValid() || base != m_parsed.lan)
+        return false;
+    const QJsonObject answer = QJsonDocument::fromJson(reply->peek(reply->bytesAvailable())).object();
+    if (answer.value(QStringLiteral("status")).isString())
+        return false;                   // the server's own error answer
+    m_base = QUrl();
+    return true;
 }
 
 void TeamServer::setBusy(bool busy)
@@ -321,6 +335,8 @@ void TeamServer::check()
             if (status == 0) {
                 m_base = QUrl();
                 emit checked(false, tr("Can't reach the team server"));
+            } else if (status != 200 && forgetForeignLan(reply, base)) {
+                emit checked(false, tr("The server had a problem. Try again later."));
             } else if (status == 401) {
                 emit checked(false, tr("The server doesn't know this code"));
             } else if (status != 200) {

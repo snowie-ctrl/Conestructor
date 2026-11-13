@@ -4,6 +4,7 @@ import QtQml.Models
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import Conestructor
+import "logic/conefile.mjs" as ConeFile
 import "logic/demo.mjs" as Demo
 
 ApplicationWindow {
@@ -72,12 +73,14 @@ ApplicationWindow {
     }
 
     // Where Save As starts: beside the open track with its name filled in; a track with no file (Untitled, or one from
-    // the team) in the last folder used, under its name.
+    // the team) in the last folder used, under its name made safe for a file name (a team name may hold anything),
+    // with % and # escaped so the URL keeps all of it.
     function saveAsStart() {
         if (TrackStore.filePath === "") {
             const folder = saveDialog.currentFolder.toString()
+            const name = ConeFile.saveName(TrackStore.name, qsTr("Untitled")).replace(/%/g, "%25").replace(/#/g, "%23")
             return { folder: saveDialog.currentFolder,
-                     file: folder + (folder.endsWith("/") ? "" : "/") + TrackStore.name + ".cone" }
+                     file: folder + (folder.endsWith("/") ? "" : "/") + name + ".cone" }
         }
         return { folder: TrackFile.folderUrl(TrackStore.filePath), file: TrackFile.fileUrl(TrackStore.filePath) }
     }

@@ -31,6 +31,13 @@ function round(value, places) {
     return Math.round(value * f) / f + 0
 }
 
+// A track's name as a file name Windows accepts (a name from the team may hold anything): each of \ / : * ? " < > |
+// and control characters becomes "-", and spaces and dots at the ends go; `fallback` when nothing is left.
+export function saveName(name, fallback) {
+    const cleaned = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").replace(/^[\s.]+|[\s.]+$/g, "")
+    return cleaned !== "" ? cleaned : fallback
+}
+
 // ISO 8601 UTC to the second: "2026-11-10T14:03:00Z".
 export function timestamp(date) {
     return date.toISOString().replace(/\.\d{3}Z$/, "Z")

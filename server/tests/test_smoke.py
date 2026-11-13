@@ -34,3 +34,12 @@ def test_aNonEmptyScratchDatabaseFailsTheFirstStep(capsys, tmp_path):
     client = SimpleNamespace(open=lambda *args, **kwargs: answer)
     assert smoke.runSteps(client, tmp_path) == 1
     assert "FAIL  empty: the scratch database is not empty: drop and recreate it" in capsys.readouterr().out
+
+
+def test_theSmokeTrackNameIsNotPlainAscii():
+    """Final review (Minor 7, re-graded): the only run against real MySQL checks that a name with quotes, a slash, an
+    accent and an emoji is stored and listed back as it is (utf8mb4 all the way)."""
+    import json
+    smoke = loadModule("coneSmoke")
+    name = json.loads(smoke.sampleTrack())["name"]
+    assert '"' in name and "/" in name and "é" in name and "🏁" in name

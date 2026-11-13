@@ -94,6 +94,7 @@ Dialog {
         }
         Label {
             objectName: "uploadQuestion"
+            textFormat: Text.PlainText      // the track's name may have come from the team
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             text: qsTr("Upload %1 (%2 cones) to %3? Teammates will be able to open it.")

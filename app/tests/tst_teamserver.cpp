@@ -200,6 +200,8 @@ private slots:
         QCOMPARE(checked.at(0).at(1).toString(), QStringLiteral("Connected to Our team (on the LAN)"));
         QCOMPARE(pub.requests.size(), 0);
         QCOMPARE(lan.requests.last().headers.value("x-team-key"), QByteArray("test-key"));
+        QCOMPARE(lan.requests.first().path, QByteArray("/api/cone/ping"));
+        QVERIFY(!lan.requests.first().headers.contains("x-team-key"));      // the ping carries no key
         QVERIFY(lan.requests.last().headers.value("user-agent").startsWith("Conestructor/"));
     }
 
@@ -247,7 +249,35 @@ private slots:
             team.check();
             QTRY_COMPARE_WITH_TIMEOUT(checked.count(), 1, slow);
             QCOMPARE(checked.at(0).at(1).toString(), QStringLiteral("Connected to Our team (over the internet)"));
+            for (const FakeRequest &r : std::as_const(lan.requests))
+                QVERIFY(!r.headers.contains("x-team-key"));           // the key never went to it
         }
+    }
+
+    // Final review, Important 1: a LAN address remembered from home that later answers like something else (another
+    // network, after the laptop slept) is forgotten, so the next request probes again and uses the public address.
+    void aRememberedLanThatAnswersLikeSomethingElseIsForgotten()
+    {
+        FakeHttp lan, pub;
+        lan.replyJson("GET", "/api/cone/ping", 200, R"({"status": "ok"})");
+        lan.replyJson("GET", "/api/cone/tracks", 200, R"({"status": "ok", "tracks": []})");
+        pub.replyJson("GET", "/api/cone/tracks", 200, R"({"status": "ok", "tracks": []})");
+        TeamServer team;
+        team.setCode(teamCodeFor(QStringLiteral("Our team"), lan.base(), pub.base()));
+        QSignalSpy listed(&team, &TeamServer::tracksListed);
+        team.listTracks();
+        QTRY_COMPARE(listed.count(), 1);
+        const FakeReply other{ 403, "text/html", "<html>forbidden</html>" };
+        lan.reply("GET", "/api/cone/ping", other);
+        lan.reply("GET", "/api/cone/tracks", other);
+        team.listTracks();
+        QTRY_COMPARE(listed.count(), 2);
+        QCOMPARE(listed.at(1).at(0).toBool(), false);
+        team.listTracks();
+        QTRY_COMPARE_WITH_TIMEOUT(listed.count(), 3, slow);
+        QCOMPARE(listed.at(2).at(0).toBool(), true);
+        QCOMPARE(lan.count("/api/cone/ping"), 2);
+        QCOMPARE(pub.count("/api/cone/tracks"), 1);
     }
 
     void theAnswerIsRemembered()

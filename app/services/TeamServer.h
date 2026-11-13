@@ -100,13 +100,17 @@ signals:
 
 private:
     PhotoStore *photos() const;
-    QNetworkRequest request(const QUrl &base, const QString &route, int timeout) const;
+    // A request to the team API; the ping goes without the key, since it may reach a machine that is not the server.
+    QNetworkRequest request(const QUrl &base, const QString &route, int timeout, bool withKey = true) const;
     // Runs `then` with the address to use: the one that answered before, else the LAN when its ping answers like the
     // server within probeTimeout, else the public one. An empty URL when there is none to try.
     void withServer(const std::function<void(const QUrl &)> &then);
     // "" for a success; otherwise the sentence to show. Nothing coming back forgets the address that answered, so the
     // next request finds the server again.
     QString failure(QNetworkReply *reply);
+    // After an error answer from the remembered LAN address that is not the server's JSON (another machine at that
+    // address, on another network): forgets the address, so the next request probes again. True when it did.
+    bool forgetForeignLan(QNetworkReply *reply, const QUrl &base);
     QString unreachable() const;
     QString tooLarge() const;
     void setBusy(bool busy);

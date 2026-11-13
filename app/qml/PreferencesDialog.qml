@@ -246,6 +246,7 @@ Dialog {
             }
             Label {
                 objectName: "teamCheckResult"
+                textFormat: Text.PlainText      // the team's name comes from the server
                 visible: text !== ""
                 text: dialog.checkResult
                 wrapMode: Text.WordWrap

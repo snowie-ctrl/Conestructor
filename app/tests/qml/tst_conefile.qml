@@ -234,6 +234,22 @@ TestCase {
 
     // Part 4's minor 3: a hand-edited placed count below the cones still carrying an element is raised to it, so the
     // change count is never negative.
+    // Final review, Important 2: a name from the team becomes a file name Windows accepts.
+    function test_saveNames_data() {
+        return [
+            { tag: "plain", name: "Duck pond", file: "Duck pond" },
+            { tag: "forbidden", name: 'Lot "B" / #2?', file: "Lot -B- - #2-" },
+            { tag: "all of them", name: 'a\\b:c*d<e>f|g', file: "a-b-c-d-e-f-g" },
+            { tag: "control", name: "a\tb", file: "a-b" },
+            { tag: "spaces and dots", name: "  Lot.  ", file: "Lot" },
+            { tag: "nothing left", name: " ... ", file: "Untitled" },
+            { tag: "empty", name: "", file: "Untitled" }
+        ]
+    }
+    function test_saveNames(row) {
+        compare(ConeFile.saveName(row.name, "Untitled"), row.file)
+    }
+
     function test_thePlacedCountIsNeverBelowTheKeptCones() {
         const d = doc(touchedUp())
         d.design.touchUps.placed = 2

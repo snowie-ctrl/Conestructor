@@ -147,6 +147,7 @@ Dialog {
                         spacing: 2
                         Label {
                             text: row.name
+                            textFormat: Text.PlainText      // a teammate's name, shown as typed
                             font.bold: true
                             elide: Text.ElideRight
                             Layout.fillWidth: true

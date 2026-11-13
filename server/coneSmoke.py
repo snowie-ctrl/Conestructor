@@ -23,6 +23,8 @@ from . import DBUtils, coneAdminRoutes as admin, coneRoutes as team, coneRules a
 A, T = "/api/cone-admin", "/api/cone"
 TOKEN = "smoke-admin-token"
 PICTURE = b"\xff\xd8\xff\xe0" + b"smoke" * 20 + b"\xff\xd9"
+# Quotes, a slash, an accent and an emoji: the real database must keep them as they are (utf8mb4).
+TRACK_NAME = 'Smoke "track" / é 🏁'
 
 
 class SmokeFailed(Exception):
@@ -54,7 +56,7 @@ def check(condition, message):
 
 
 def sampleTrack():
-    return json.dumps({"format": "conestructor-track", "version": 1, "name": "Smoke track", "cones": [
+    return json.dumps({"format": "conestructor-track", "version": 1, "name": TRACK_NAME, "cones": [
         {"index": 0, "type": "standing", "x": 1, "y": 2, "heading": 0, "element": "e1"},
         {"index": 1, "type": "leaning", "x": 3, "y": 4, "heading": 90, "element": "e1"}], "photo": None}).encode("utf-8")
 
@@ -92,7 +94,7 @@ def steps(teamsRoot):
     def listed(client, state):
         tracks = call(client, "GET", f"{T}/tracks", key=state["A"]["key"]).get_json()["tracks"]
         check([(t["id"], t["name"], t["cones"], t["bytes"]) for t in tracks]
-              == [(state["track"], "Smoke track", 2, len(sampleTrack()))], f"listed {tracks}")
+              == [(state["track"], TRACK_NAME, 2, len(sampleTrack()))], f"listed {tracks}")
         return "listed with its name, cones and size"
 
     def files(client, state):

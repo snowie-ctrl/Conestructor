@@ -2646,6 +2646,74 @@ private slots:
         QVERIFY(!enabledNow(QStringLiteral("Duplicate")));
         QVERIFY(!enabledNow(QStringLiteral("Reverse direction")));
     }
+
+    // Final review, Important 2: Save As for a team track whose name holds characters a file name cannot (or that a
+    // URL would cut short) starts with a name Windows accepts.
+    void saveAsGivesATeamTrackAFileNameWindowsAccepts()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *trackFile = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        const QString path = dir.filePath(QStringLiteral("odd-name.cone"));
+        QVariant ok;
+        QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+        QVERIFY(ok.toBool());
+        QVariantMap read;
+        QMetaObject::invokeMethod(trackFile, "open", Q_RETURN_ARG(QVariantMap, read), Q_ARG(QString, path));
+        QMetaObject::invokeMethod(w.store, "newTrack");
+        QMetaObject::invokeMethod(w.store, "openFromTeam", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, QVariant(read)),
+                                  Q_ARG(QVariant, QStringLiteral("Lot \"B\" / #2?")));
+        QVERIFY(ok.toBool());
+        QVariant start;
+        QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
+        const QString local = QUrl(plain(start).toMap().value(QStringLiteral("file")).toString()).toLocalFile();
+        QVERIFY2(local.endsWith(QStringLiteral("/Lot -B- - #2-.cone")), qPrintable(local));
+    }
+
+    // Final review (Minor 6, re-graded): names that came from the team show as typed, never as rich text.
+    void teamNamesShowAsTyped()
+    {
+        FakeHttp server;
+        Loaded w;
+        QVERIFY(w.load(true));
+        QVariant text;
+        QMetaObject::invokeMethod(w.store, "documentText", Q_RETURN_ARG(QVariant, text), Q_ARG(QVariant, QStringLiteral("Fast")));
+        server.reply("GET", "/api/cone/tracks/12/file",
+                     FakeReply{ 200, "application/json", TrackFile::documentBytes(text.toString(), nullptr, -1) });
+        server.replyJson("GET", "/api/cone/tracks", 200,
+                         "{\"status\": \"ok\", \"tracks\": [{\"id\": 12, \"name\": \"<b>Fast</b>\", \"cones\": 57, "
+                         "\"uploaded\": \"2026-11-12T14:02:00Z\", \"bytes\": 3000}]}");
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        QObject *preferences = w.window->findChild<QObject *>(QStringLiteral("preferencesDialog"));
+        QMetaObject::invokeMethod(preferences, "open");
+        QTRY_VERIFY(preferences->property("opened").toBool());
+        QQuickItem *checkResult = w.named(QStringLiteral("teamCheckResult"));
+        QVERIFY(checkResult);
+        QCOMPARE(checkResult->property("textFormat").toInt(), 0);             // Text.PlainText ("Connected to <team>")
+        QMetaObject::invokeMethod(preferences, "close");
+        QTRY_VERIFY(!preferences->property("visible").toBool());
+
+        QMetaObject::invokeMethod(w.window, "openFromTeam");
+        QQuickItem *listed = nullptr;
+        QTRY_VERIFY((listed = findText(w.window, QStringLiteral("<b>Fast</b>"))) != nullptr);
+        QCOMPARE(listed->property("textFormat").toInt(), 0);
+        w.clickItem(w.named(QStringLiteral("teamOpenButton")));
+        QTRY_COMPARE(w.window->title(), QStringLiteral("Conestructor 0.6 — <b>Fast</b> (from team)"));
+        QQuickItem *status = findText(w.window, QStringLiteral("Opened <b>Fast</b> from the team"));
+        QVERIFY(status);
+        QCOMPARE(status->property("textFormat").toInt(), 0);
+
+        QMetaObject::invokeMethod(w.window, "uploadToTeam");
+        QObject *upload = w.window->findChild<QObject *>(QStringLiteral("uploadDialog"));
+        QTRY_VERIFY(upload->property("opened").toBool());
+        QQuickItem *question = w.named(QStringLiteral("uploadQuestion"));
+        QVERIFY(question->property("text").toString().contains(QStringLiteral("<b>Fast</b>")));
+        QCOMPARE(question->property("textFormat").toInt(), 0);
+        QMetaObject::invokeMethod(upload, "close");
+        QTRY_VERIFY(!upload->property("visible").toBool());
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)
