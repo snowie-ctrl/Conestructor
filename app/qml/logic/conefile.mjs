@@ -133,7 +133,10 @@ function readTouchUps(v) {
             return null
         cones.push(cone)
     }
-    return { placed: Math.max(0, Math.round(v.placed)), cones: cones }
+    // A hand edit may say fewer were placed than the cones still carrying an element: the count of changes would go
+    // below zero, so the placed count is raised to them (part 4's minor 3).
+    const kept = cones.filter(c => c.element !== null).length
+    return { placed: Math.max(kept, Math.round(v.placed)), cones: cones }
 }
 
 // Joined ends a hand edit has left slightly apart (up to JOIN_SLACK, see repairJoins) are glued exactly, so the next

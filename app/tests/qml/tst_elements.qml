@@ -466,6 +466,32 @@ TestCase {
         verify(count(Elements.conesWorld(onEl, 5), "standing") > count(on, "standing"))
     }
 
+    // Part 4's minor 5: the outside cones lie on the outer side of the arc, whichever way the turn goes. The inside
+    // (leaning) cones' middle lies inside the arc, so an outside cone is further from it than the centreline point
+    // nearest to that cone.
+    function test_outsideConesAreOnTheOuterSide_data() {
+        return [{ tag: "right", direction: "right" }, { tag: "left", direction: "left" }]
+    }
+    function test_outsideConesAreOnTheOuterSide(row) {
+        const off = Elements.conesWorld(placed("turn", { direction: row.direction }))
+        const onEl = placed("turn", { direction: row.direction, outsideCones: "on" })
+        const on = Elements.conesWorld(onEl)
+        const added = on.filter(c => !off.some(o => Math.hypot(o.x - c.x, o.y - c.y) < 1e-9))
+        verify(added.length > 0)
+        const inside = off.filter(c => c.type === "leaning")
+        const mid = { x: inside.reduce((s, c) => s + c.x, 0) / inside.length,
+                      y: inside.reduce((s, c) => s + c.y, 0) / inside.length }
+        const path = Elements.pathWorld(onEl)
+        for (const c of added) {
+            let nearest = path[0]
+            for (const p of path)
+                if (Math.hypot(p.x - c.x, p.y - c.y) < Math.hypot(nearest.x - c.x, nearest.y - c.y))
+                    nearest = p
+            verify(Math.hypot(c.x - mid.x, c.y - mid.y) > Math.hypot(nearest.x - mid.x, nearest.y - mid.y),
+                   "an outside cone at " + c.x.toFixed(2) + ", " + c.y.toFixed(2) + " sits inside the centreline")
+        }
+    }
+
     // Part 3's minor: a slalom or chicane folds just past its threshold (tightest curve below half the track width)
     // and not at it. The threshold width is found by halving the range.
     function foldsAtWidth(type, width) {

@@ -4,6 +4,7 @@ import "../../qml/logic/commands.mjs" as Commands
 import "../../qml/logic/conefile.mjs" as ConeFile
 import "../../qml/logic/demo.mjs" as Demo
 import "../../qml/logic/elements.mjs" as Elements
+import "../../qml/logic/touchups.mjs" as Touchups
 import "fixtures/schemacheck.mjs" as SchemaCheck
 
 TestCase {
@@ -229,6 +230,17 @@ TestCase {
         const back = ConeFile.fromDocument(doc(t), -1).track
         compare(JSON.stringify(back), JSON.stringify(t))
         verify(Commands.locked(back))
+    }
+
+    // Part 4's minor 3: a hand-edited placed count below the cones still carrying an element is raised to it, so the
+    // change count is never negative.
+    function test_thePlacedCountIsNeverBelowTheKeptCones() {
+        const d = doc(touchedUp())
+        d.design.touchUps.placed = 2
+        const back = ConeFile.fromDocument(d, -1).track
+        const kept = back.touchUps.cones.filter(c => c.element !== null).length
+        compare(back.touchUps.placed, kept)
+        compare(Touchups.changes(back.touchUps), back.touchUps.cones.filter(c => c.edited).length)
     }
 
     function test_densityRoundTrips() {

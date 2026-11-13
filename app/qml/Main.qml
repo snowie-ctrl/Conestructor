@@ -289,6 +289,7 @@ ApplicationWindow {
         }
         Menu {
             id: editMenu
+            objectName: "editMenu"
             title: qsTr("&Edit")
             Action {
                 text: TrackStore.canUndo ? qsTr("Undo %1").arg(TrackStore.undoLabel) : qsTr("Undo")
@@ -306,7 +307,7 @@ ApplicationWindow {
             Action {
                 text: qsTr("Duplicate")
                 shortcut: "Ctrl+D"
-                enabled: TrackStore.selectedElements.length > 0
+                enabled: TrackStore.selectedElements.length > 0 && !TrackStore.locked
                 onTriggered: TrackStore.duplicateSelected()
             }
             Action {
@@ -317,7 +318,7 @@ ApplicationWindow {
             }
             Action {
                 text: qsTr("Reverse direction")
-                enabled: TrackStore.selectedElements.length > 0
+                enabled: TrackStore.selectedElements.length > 0 && !TrackStore.locked
                 onTriggered: TrackStore.reverseSelected()
             }
             MenuSeparator {}

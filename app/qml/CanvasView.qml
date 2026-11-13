@@ -49,6 +49,10 @@ Item {
     // A track piece in hand is dropped when setup comes undone (the track tiles lock again).
     readonly property bool setupDone: Setup.status(TrackStore.track).done
     onSetupDoneChanged: if (!setupDone && Elements.TYPES.indexOf(placingKind) >= 0) cancelPlacing()
+    // Touch-ups lock the track: a track piece, the ruler or a target in hand is put back (part 4's minor 1), since the
+    // next click would be refused and selectLast would pick an unrelated element. An added cone stays in hand.
+    readonly property bool trackLocked: TrackStore.locked
+    onTrackLockedChanged: if (trackLocked && placingKind !== "" && placingKind !== "cone") cancelPlacing()
 
     // A tile in hand, a ruler's first click or the length box belong to the track they were started on.
     Connections {

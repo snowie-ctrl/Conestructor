@@ -2606,6 +2606,46 @@ private slots:
         QTRY_VERIFY(findText(w.window, QStringLiteral("Duck pond")));
         QVERIFY(w.named(QStringLiteral("teamOpenButton"))->isEnabled());
     }
+
+    // Part 4's minor 1: a track piece in hand is put back when touch-ups lock the track.
+    void aPieceInHandIsPutBackWhenTheTrackLocks()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        w.clickItem(w.tile(QStringLiteral("straight")));
+        QCOMPARE(w.canvas->property("placingKind").toString(), QStringLiteral("straight"));
+        w.run(QStringLiteral("deleteCones"), { { "indices", QVariantList{ 0 } } });
+        QVERIFY(w.store->property("locked").toBool());
+        QCOMPARE(w.canvas->property("placingKind").toString(), QString());
+        QCOMPARE(w.canvas->property("placingBy").toString(), QString());
+    }
+
+    // Part 4's minor 2: Edit › Duplicate and Reverse direction are greyed while the track is locked.
+    void lockingGreysDuplicateAndReverse()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *menu = w.window->findChild<QObject *>(QStringLiteral("editMenu"));
+        QVERIFY(menu);
+        const auto enabledNow = [&](const QString &text) {
+            QMetaObject::invokeMethod(w.store, "select", Q_ARG(QVariant, QStringLiteral("e1")));
+            QMetaObject::invokeMethod(menu, "open");
+            QQuickItem *item = nullptr;
+            QTest::qWaitFor([&]() { return (item = findMenuItem(w.window, text)) != nullptr; });
+            const bool enabled = item && item->isEnabled();
+            QMetaObject::invokeMethod(menu, "close");
+            QTest::qWaitFor([&]() { return !menu->property("visible").toBool(); });
+            return enabled;
+        };
+        QVERIFY(enabledNow(QStringLiteral("Duplicate")));
+        QVERIFY(enabledNow(QStringLiteral("Reverse direction")));
+        QMetaObject::invokeMethod(w.window, "placeCones");
+        w.run(QStringLiteral("deleteCones"), { { "indices", QVariantList{ 0 } } });
+        QVERIFY(w.store->property("locked").toBool());
+        QVERIFY(!enabledNow(QStringLiteral("Duplicate")));
+        QVERIFY(!enabledNow(QStringLiteral("Reverse direction")));
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)
