@@ -90,3 +90,20 @@ def appClient(blueprint, prefix, headers):
     client = app.test_client()
     client.environ_base.update(headers)
     return client
+
+
+@pytest.fixture
+def teamRoutes():
+    return loadModule("coneRoutes")
+
+
+@pytest.fixture
+def anonClient(teamRoutes):
+    """The team API with no key."""
+    return appClient(teamRoutes.coneBP, "/api/cone", {})
+
+
+@pytest.fixture
+def teamClient(teamRoutes):
+    """The team API sending KEY; queue TEAM first in useDb's fetchone for the key lookup."""
+    return appClient(teamRoutes.coneBP, "/api/cone", {"HTTP_X_TEAM_KEY": KEY})

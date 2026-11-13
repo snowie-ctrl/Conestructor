@@ -1,461 +1,184 @@
-from flask import Blueprint, jsonify, request, send_file
-from pathlib import Path
-import mysql.connector, re
+"""
+Conestructor's team API on the server, at /api/cone (Caduceus registers coneBP there). The only prefix nginx passes
+from the public subdomain; the LAN reaches it on the API's own port. Every request but ping needs X-Team-Key, and a
+team sees only its own tracks: another team's track answers 404, as one that does not exist. Checks live in coneRules,
+so the routes stay thin. Repo: Code-Development/Conestructor server/ (README.md there says what goes where).
+"""
+import uuid
+from contextlib import contextmanager
 
-from . import DBUtils
+from flask import Blueprint, g, jsonify, request, send_file
 
+from . import DBUtils, coneRules as rules
 
-# ---------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------
+coneBP = Blueprint("cone", __name__)
 
-TRACK_ROOT = Path("/pool/appFiles/conestructor/tracks")
-
-
-# ---------------------------------------------------------
-# Blueprint
-# ---------------------------------------------------------
-
-coneBP = Blueprint(
-    "cone",
-    __name__
-)
+DB_NAME = "cone"
 
 
-# ---------------------------------------------------------
-# Database
-# ---------------------------------------------------------
-
-def getDB():
-    return DBUtils.initConnection("cone")
+def error(message, code=400):
+    return jsonify({"status": "error", "message": message}), code
 
 
-def sanitize_name_part(value):
-    value = value.strip().lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    return value.strip("-") or "track"
-
-
-# ---------------------------------------------------------
-# GET TILE DATA
-#
-# GET /api/cone/tracks/5
-#
-# GET /api/cone/tracks/5?exclude=1,2,3
-# ---------------------------------------------------------
-
-@coneBP.route("/tracks/get", methods=["POST"])
-def get_tile_data():
-
-    data = request.get_json(silent=True) or {}
-
-    num_tiles = data.get("numTiles", 0)
-    used_ids = data.get("usedIDs", [])
-
-
-    # Validate numTiles
+@contextmanager
+def database():
+    conn = DBUtils.initConnection(DB_NAME)
     try:
-        num_tiles = int(num_tiles)
-
-    except (TypeError, ValueError):
-
-        return jsonify({
-            "error": "numTiles must be an integer"
-        }), 400
-
-
-    if num_tiles <= 0:
-
-        return jsonify({
-            "error": "numTiles must be greater than 0"
-        }), 400
-
-
-    # Validate usedIDs
-    try:
-
-        excluded_ids = [
-            int(track_id)
-            for track_id in used_ids
-        ]
-
-    except (TypeError, ValueError):
-
-        return jsonify({
-            "error": "usedIDs must contain only integer IDs"
-        }), 400
-
-
-    connection = None
-    cursor = None
-
-
-    try:
-
-        connection = getDB()
-
-        cursor = connection.cursor(
-            dictionary=True
-        )
-
-
-        query = """
-            SELECT
-                id,
-                location,
-                numCones,
-                processingType
-
-            FROM tracks
-        """
-
-
-        parameters = []
-
-
-        if excluded_ids:
-
-            placeholders = ", ".join(
-                ["%s"] * len(excluded_ids)
-            )
-
-
-            query += f"""
-                WHERE id NOT IN ({placeholders})
-            """
-
-
-            parameters.extend(
-                excluded_ids
-            )
-
-
-        query += """
-            ORDER BY RAND()
-            LIMIT %s
-        """
-
-
-        parameters.append(
-            num_tiles
-        )
-
-
-        cursor.execute(
-            query,
-            parameters
-        )
-
-
-        tracks = cursor.fetchall()
-
-
-        return jsonify(
-            tracks
-        ), 200
-
-
-    except mysql.connector.Error as error:
-
-        print(
-            f"MySQL error while getting tile data: {error}"
-        )
-
-
-        return jsonify({
-            "error": "Database error"
-        }), 500
-
-
+        yield conn
     finally:
-
-        if cursor is not None:
-            cursor.close()
+        conn.close()
 
 
-        if connection is not None:
-            connection.close()
+@coneBP.errorhandler(413)
+def tooLarge(_):
+    return error("too large", 413)
 
 
-# ---------------------------------------------------------
-# GET THUMBNAIL
-#
-# GET /api/cone/tracks/5/thumbnail
-# ---------------------------------------------------------
-
-@coneBP.route(
-    "/tracks/<int:track_id>/thumbnail",
-    methods=["GET"]
-)
-def get_thumbnail(track_id):
-
-    connection = None
-    cursor = None
-
-
+@coneBP.before_request
+def requireTeamKey():
+    """Finds the team whose key this is (by the key's hash) and keeps it in g.team; 401 when none."""
+    if request.endpoint == "cone.ping":
+        return None
+    key = request.headers.get("X-Team-Key", "")
+    if not key:
+        return error("unauthorized", 401)
     try:
-
-        connection = getDB()
-
-        cursor = connection.cursor()
-
-
-        cursor.execute(
-            """
-            SELECT thumbnailPath
-            FROM tracks
-            WHERE id = %s
-            """,
-            (track_id,)
-        )
+        with database() as conn:
+            cur = conn.cursor(dictionary=True)
+            cur.execute("SELECT id, name FROM teams WHERE keyHash = %s", (rules.keyHash(key),))
+            team = cur.fetchone()
+            cur.close()
+    except Exception as e:
+        print(f"[cone] looking up a team key failed: {e}")
+        return error("database error", 500)
+    if team is None:
+        return error("unauthorized", 401)
+    g.team = team
+    return None
 
 
-        result = cursor.fetchone()
+@coneBP.route("/ping", methods=["GET"])
+def ping():
+    return jsonify({"status": "ok"})
 
 
-        if result is None:
-
-            return jsonify({
-                "error": "Track not found"
-            }), 404
+@coneBP.route("/team", methods=["GET"])
+def team():
+    return jsonify({"status": "ok", "name": g.team["name"]})
 
 
-        relative_path = Path(
-            result[0]
-        )
+@coneBP.route("/tracks", methods=["GET"])
+def tracks():
+    try:
+        with database() as conn:
+            cur = conn.cursor(dictionary=True)
+            cur.execute("SELECT id, name, cones, uploaded, bytes FROM tracks WHERE teamId = %s "
+                        "ORDER BY uploaded DESC, id DESC", (g.team["id"],))
+            rows = cur.fetchall()
+            cur.close()
+    except Exception as e:
+        print(f"[cone] listing tracks failed: {e}")
+        return error("database error", 500)
+    return jsonify({"status": "ok", "tracks": [
+        {"id": r["id"], "name": r["name"], "cones": r["cones"], "uploaded": rules.isoUtc(r["uploaded"]),
+         "bytes": r["bytes"]} for r in rows]})
 
 
-        full_path = (
-            TRACK_ROOT / relative_path
-        ).resolve()
+def ownTrack(trackId):
+    """Whether track `trackId` is this team's."""
+    with database() as conn:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT id FROM tracks WHERE id = %s AND teamId = %s", (trackId, g.team["id"]))
+        row = cur.fetchone()
+        cur.close()
+    return row is not None
 
 
-        if not full_path.is_file():
-
-            return jsonify({
-                "error": "Thumbnail file not found"
-            }), 404
-
-
-        return send_file(
-            str(full_path)
-        )
-
-
-    except mysql.connector.Error as error:
-
-        print(
-            f"MySQL error while getting thumbnail: {error}"
-        )
+def sendTrackFile(trackId, which, mimetype):
+    """One of the track's two files (0: the .cone, 1: the thumbnail), never cached by anything in between."""
+    try:
+        if not ownTrack(trackId):
+            return error("no such track", 404)
+    except Exception as e:
+        print(f"[cone] finding track {trackId} failed: {e}")
+        return error("database error", 500)
+    path = rules.trackFiles(g.team["id"], trackId)[which]
+    if not path.is_file():
+        return error("the track's file is missing", 404)
+    answer = send_file(path, mimetype=mimetype, max_age=0)
+    answer.headers["Cache-Control"] = "private, no-cache"
+    return answer
 
 
-        return jsonify({
-            "error": "Database error"
-        }), 500
+@coneBP.route("/tracks/<int:trackId>/file", methods=["GET"])
+def trackFile(trackId):
+    return sendTrackFile(trackId, 0, "application/json")
 
 
+@coneBP.route("/tracks/<int:trackId>/thumbnail", methods=["GET"])
+def thumbnail(trackId):
+    return sendTrackFile(trackId, 1, "image/jpeg")
+
+
+@coneBP.route("/tracks", methods=["POST"])
+def upload():
+    """A multipart form: `file` (the .cone) and `thumbnail` (a JPEG). The name and cone count are read from the file."""
+    if request.content_length is not None and request.content_length > rules.MAX_REQUEST:
+        return error("too large", 413)
+    request.max_content_length = rules.MAX_REQUEST     # Flask 3.1: also caps a body sent without a length
+    file = request.files.get("file")
+    picture = request.files.get("thumbnail")
+    if file is None or picture is None:
+        return error("the upload needs a file and a thumbnail")
+    data = file.read(rules.MAX_FILE + 1)
+    if len(data) > rules.MAX_FILE:
+        return error("too large", 413)
+    thumbnailData = picture.read(rules.MAX_THUMBNAIL + 1)
+    try:
+        info = rules.readTrack(data)
+        rules.checkThumbnail(thumbnailData)
+    except rules.Refused as e:
+        return error(str(e))
+    return store(info, data, thumbnailData)
+
+
+def store(info, data, thumbnailData):
+    """Writes both files under temporary names, inserts the row, renames the files to the row's id and commits. Any
+    failure rolls the row back and removes every file it wrote, so a failed upload leaves nothing behind."""
+    teamId = g.team["id"]
+    folder = rules.TEAMS_ROOT / str(int(teamId))
+    temporary = uuid.uuid4().hex
+    written = [folder / f".upload-{temporary}.cone", folder / f".upload-{temporary}.jpg"]
+    placed = []
+    conn = None
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        written[0].write_bytes(data)
+        written[1].write_bytes(thumbnailData)
+        conn = DBUtils.initConnection(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO tracks (teamId, name, cones, uploaded, bytes) VALUES (%s, %s, %s, %s, %s)",
+                    (teamId, info["name"], info["cones"], rules.utcNow(), len(data)))
+        trackId = cur.lastrowid
+        cur.close()
+        for temporaryPath, final in zip(written, rules.trackFiles(teamId, trackId)):
+            temporaryPath.replace(final)
+            placed.append(final)
+        conn.commit()
+    except Exception as e:
+        print(f"[cone] storing an upload failed: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        for path in written + placed:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return error("could not store the track", 500)
     finally:
-
-        if cursor is not None:
-            cursor.close()
-
-
-        if connection is not None:
-            connection.close()
-
-
-# ---------------------------------------------------------
-# GET TRACK FILE
-#
-# GET /api/cone/tracks/5/file
-# ---------------------------------------------------------
-
-@coneBP.route(
-    "/tracks/<int:track_id>/file",
-    methods=["GET"]
-)
-def get_track_file(track_id):
-
-    connection = None
-    cursor = None
-
-
-    try:
-
-        connection = getDB()
-
-        cursor = connection.cursor()
-
-
-        cursor.execute(
-            """
-            SELECT filePath
-            FROM tracks
-            WHERE id = %s
-            """,
-            (track_id,)
-        )
-
-
-        result = cursor.fetchone()
-
-
-        if result is None:
-
-            return jsonify({
-                "error": "Track not found"
-            }), 404
-
-
-        relative_path = Path(
-            result[0]
-        )
-
-
-        full_path = (
-            TRACK_ROOT / relative_path
-        ).resolve()
-
-
-        if not full_path.is_file():
-
-            return jsonify({
-                "error": "Track file not found"
-            }), 404
-
-
-        return send_file(
-            str(full_path)
-        )
-
-
-    except mysql.connector.Error as error:
-
-        print(
-            f"MySQL error while getting track file: {error}"
-        )
-
-
-        return jsonify({
-            "error": "Database error"
-        }), 500
-
-
-    finally:
-
-        if cursor is not None:
-            cursor.close()
-
-
-        if connection is not None:
-            connection.close()
-            
-            
-            
-            
-            
-            
-            
-@coneBP.route(
-    "/tracks/reserve",
-    methods=["POST"]
-)
-def reserve_track_directory():
-
-    data = request.get_json(silent=True) or {}
-
-    location = data.get("location", "")
-    processing_type = data.get("processingType", "")
-
-    if not location or not processing_type:
-        return jsonify({
-            "error": "location and processingType are required"
-        }), 400
-
-    location_part = sanitize_name_part(location)
-    processing_part = sanitize_name_part(processing_type)
-
-    counter = 1
-    candidate_path = None
-    candidate_name = None
-
-    while True:
-        candidate_name = f"{location_part}_{processing_part}_{counter}"
-        candidate_path = TRACK_ROOT / candidate_name
-
-        if not candidate_path.exists():
-            break
-
-        counter += 1
-
-    try:
-        candidate_path.mkdir(parents=True, exist_ok=False)
-
-    except OSError as error:
-        print(f"Error creating track directory: {error}")
-        return jsonify({
-            "error": "Could not reserve track directory"
-        }), 500
-
-    return jsonify({
-        "dirName": candidate_name
-    }), 201
-    
-    
-    
-
-@coneBP.route(
-    "/tracks/upload",
-    methods=["POST"]
-)
-def create_track():
-
-    data = request.get_json(silent=True) or {}
-
-    required_fields = ["location", "numCones", "processingType", "thumbnailPath", "filePath"]
-
-    if not all(field in data for field in required_fields):
-        return jsonify({
-            "error": f"Missing required fields: {required_fields}"
-        }), 400
-
-    connection = None
-    cursor = None
-
-    try:
-        connection = getDB()
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO tracks (location, numCones, processingType, thumbnailPath, filePath)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (
-                data["location"],
-                data["numCones"],
-                data["processingType"],
-                data["thumbnailPath"],
-                data["filePath"]
-            )
-        )
-
-        connection.commit()
-        track_id = cursor.lastrowid
-
-        return jsonify({
-            "id": track_id
-        }), 201
-
-    except mysql.connector.Error as error:
-        print(f"MySQL error while creating track: {error}")
-        return jsonify({
-            "error": "Database error"
-        }), 500
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-        if connection is not None:
-            connection.close()
+        if conn is not None:
+            conn.close()
+    return jsonify({"status": "ok", "id": trackId}), 201
