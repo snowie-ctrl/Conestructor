@@ -17,6 +17,10 @@
 #include <QTest>
 #include <QUrl>
 #include <QtMath>
+#include <QScopeGuard>
+#include "fakehttp.h"
+#include "services/TeamServer.h"
+#include "services/TrackFile.h"
 #include <cmath>
 #include <QtQml/QQmlExtensionPlugin>
 
@@ -2322,6 +2326,104 @@ private slots:
             const QPointF b = plain(dots[i + 1]).toList().value(0).toPointF();
             QVERIFY2(shade(a) > shade((a + b) / 2) + 40, qPrintable(QStringLiteral("dot %1").arg(i)));
         }
+    }
+
+    // Part 5: Preferences › Team takes a team code only when it is one (spaces around it dropped), shows it masked
+    // unless Show is ticked, and Clear removes it. Review focus 1.
+    void theTeamSection()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        QObject *team = w.engine.singletonInstance<QObject *>("Conestructor", "TeamServer");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("preferencesDialog"));
+        QVERIFY(dialog);
+        QMetaObject::invokeMethod(dialog, "open");
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *field = w.named(QStringLiteral("teamCodeField"));
+        QVERIFY(field);
+        QCOMPARE(field->property("echoMode").toInt(), 2);                    // TextInput.Password
+        scrollIntoView(field);
+        w.clickItem(field);
+        typeText(w.window, QStringLiteral("hello"));
+        QVERIFY(w.named(QStringLiteral("teamCodeNote"))->isVisible());
+        QCOMPARE(settings->property("teamCode").toString(), QString());
+
+        const QString code = teamCodeFor(QStringLiteral("Our team"), QUrl(), QUrl(QStringLiteral("https://public.example")));
+        QTest::keyClick(w.window, Qt::Key_A, Qt::ControlModifier);
+        typeText(w.window, QStringLiteral("  ") + code + QStringLiteral("  "));
+        QVERIFY(!w.named(QStringLiteral("teamCodeNote"))->isVisible());
+        QCOMPARE(settings->property("teamCode").toString(), code);
+        QVERIFY(team->property("hasCode").toBool());
+        QCOMPARE(team->property("teamName").toString(), QStringLiteral("Our team"));
+
+        QQuickItem *show = w.named(QStringLiteral("teamShowCode"));
+        scrollIntoView(show);
+        w.clickItem(show);
+        QCOMPARE(field->property("echoMode").toInt(), 0);                    // TextInput.Normal
+        QQuickItem *clear = w.named(QStringLiteral("teamClearButton"));
+        scrollIntoView(clear);
+        w.clickItem(clear);
+        QCOMPARE(settings->property("teamCode").toString(), QString());
+        QVERIFY(!team->property("hasCode").toBool());
+        QCOMPARE(field->property("text").toString(), QString());
+    }
+
+    // Part 5: a track opened from the team has no file: "(from team)" in the title, not unsaved, not a recent file;
+    // Save As starts with its name, and once saved it is an ordinary file.
+    void aTrackFromTheTeamOpensWithoutAPath()
+    {
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        QObject *trackFile = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        const QString path = dir.filePath(QStringLiteral("from-team.cone"));
+        QVariant ok;
+        QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+        QVERIFY(ok.toBool());
+        QVariantMap read;
+        QMetaObject::invokeMethod(trackFile, "open", Q_RETURN_ARG(QVariantMap, read), Q_ARG(QString, path));
+        QMetaObject::invokeMethod(w.store, "newTrack");
+        const QStringList recent = settings->property("recentFiles").toStringList();
+
+        QMetaObject::invokeMethod(w.store, "openFromTeam", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, QVariant(read)),
+                                  Q_ARG(QVariant, QStringLiteral("Duck pond")));
+        QVERIFY(ok.toBool());
+        QCOMPARE(w.window->title(), QStringLiteral("Conestructor 0.6 — Duck pond (from team)"));
+        QVERIFY(w.store->property("fromTeam").toBool());
+        QVERIFY(!w.store->property("dirty").toBool());
+        QCOMPARE(w.store->property("filePath").toString(), QString());
+        QCOMPARE(w.store->property("elementCount").toInt(), 4);
+        QCOMPARE(settings->property("recentFiles").toStringList(), recent);
+        QCOMPARE(w.store->property("message").toString(), QStringLiteral("Opened Duck pond from the team"));
+
+        QVariant start;
+        QMetaObject::invokeMethod(w.window, "saveAsStart", Q_RETURN_ARG(QVariant, start));
+        QVERIFY(plain(start).toMap().value(QStringLiteral("file")).toString().endsWith(QStringLiteral("/Duck pond.cone")));
+
+        const QString saved = dir.filePath(QStringLiteral("Saved from team.cone"));
+        QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, saved));
+        QVERIFY(ok.toBool());
+        QCOMPARE(w.window->title(), QStringLiteral("Conestructor 0.6 — Saved from team"));
+        QVERIFY(!w.store->property("fromTeam").toBool());
+        QMetaObject::invokeMethod(w.store, "newTrack");
+        QCOMPARE(w.window->title(), QStringLiteral("Conestructor 0.6 — Untitled"));
+    }
+
+    // Part 5: a track that cannot be processed is not uploaded; the banner says why.
+    void anUploadNeedsATrackThatProcesses()
+    {
+        Loaded w;
+        QVERIFY(w.load(false));
+        QVariant result;
+        QMetaObject::invokeMethod(w.store, "uploadResult", Q_RETURN_ARG(QVariant, result));
+        QVERIFY(isNull(result));
+        QVERIFY(findBanner(w.window)->isVisible());
+
+        QMetaObject::invokeMethod(w.window, "loadDemo", Q_ARG(QVariant, QVariant(false)));
+        QMetaObject::invokeMethod(w.store, "uploadResult", Q_RETURN_ARG(QVariant, result));
+        QVERIFY(plain(result).toMap().value(QStringLiteral("cones")).toList().size() > 40);
     }
 };
 

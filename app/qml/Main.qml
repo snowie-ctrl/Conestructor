@@ -11,7 +11,8 @@ ApplicationWindow {
     width: 1600
     height: 960
     visible: true
-    title: "Conestructor " + AppInfo.shortVersion + " — " + TrackStore.name + (TrackStore.dirty ? "*" : "")
+    title: "Conestructor " + AppInfo.shortVersion + " — " + TrackStore.name
+           + (TrackStore.fromTeam ? qsTr(" (from team)") : "") + (TrackStore.dirty ? "*" : "")
     color: "#1f1f1f"
 
     palette.window: "#262626"
@@ -31,6 +32,13 @@ ApplicationWindow {
     property bool closing: false
     // False while a backup from an earlier session waits on the Restore question: closing then keeps it.
     property bool backupAnswered: true
+
+    // The team server follows the team code in Preferences.
+    Binding {
+        target: TeamServer
+        property: "code"
+        value: Settings.teamCode
+    }
 
     function fitSoon() {
         canvasView.fitPending = true
@@ -63,13 +71,13 @@ ApplicationWindow {
             then()
     }
 
-    // Where Save As starts: beside the open track with its name filled in; an Untitled track in the last folder used,
-    // named Untitled.
+    // Where Save As starts: beside the open track with its name filled in; a track with no file (Untitled, or one from
+    // the team) in the last folder used, under its name.
     function saveAsStart() {
         if (TrackStore.filePath === "") {
             const folder = saveDialog.currentFolder.toString()
             return { folder: saveDialog.currentFolder,
-                     file: folder + (folder.endsWith("/") ? "" : "/") + qsTr("Untitled") + ".cone" }
+                     file: folder + (folder.endsWith("/") ? "" : "/") + TrackStore.name + ".cone" }
         }
         return { folder: TrackFile.folderUrl(TrackStore.filePath), file: TrackFile.fileUrl(TrackStore.filePath) }
     }

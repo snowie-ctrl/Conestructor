@@ -23,7 +23,11 @@ QtObject {
     // The open file ("" until first saved), the track's name, and whether it differs from what was last saved or
     // opened (undoing back to that state clears it).
     property string filePath: ""
-    readonly property string name: filePath !== "" ? TrackFile.baseName(filePath) : qsTr("Untitled")
+    // A track opened from the team has no file until it is saved; its name is the one it was uploaded with.
+    property string teamName: ""
+    readonly property bool fromTeam: filePath === "" && teamName !== ""
+    readonly property string name: filePath !== "" ? TrackFile.baseName(filePath)
+                                 : teamName !== "" ? teamName : qsTr("Untitled")
     readonly property string trackText: JSON.stringify(track)
     property string savedText: JSON.stringify(Commands.emptyTrack())
     readonly property bool dirty: trackText !== savedText
@@ -185,6 +189,7 @@ QtObject {
     function newTrack() {
         PhotoStore.clear(-1)
         filePath = ""
+        teamName = ""
         loadTrack(Commands.emptyTrack())
         markSaved()
         problemsCleared()
@@ -198,6 +203,7 @@ QtObject {
             return false
         }
         filePath = path
+        teamName = ""
         markSaved()
         Settings.addRecentFile(path)
         deleteBackup()
@@ -208,9 +214,15 @@ QtObject {
     // Reads a track file: { track, warning, photoRef }, or null after a banner says why not (this track is untouched).
     function readTrack(path) {
         const r = TrackFile.open(path)
+        if (r.error === "missing")
+            Settings.removeRecentFile(path)
+        return readOpened(r)
+    }
+
+    // A track file's contents as TrackFile.open or TeamServer.download gave them ({ text, photoRef, photoError } or
+    // { error, message }): { track, warning, photoRef }, or null after a banner says why not.
+    function readOpened(r) {
         if (r.error) {
-            if (r.error === "missing")
-                Settings.removeRecentFile(path)
             report(r.error === "notJson" ? ConeFile.MESSAGES.notTrack : r.message, null)
             return null
         }
@@ -245,11 +257,37 @@ QtObject {
         if (!read)
             return false
         filePath = path
+        teamName = ""
         show(read)
         markSaved()
         Settings.addRecentFile(path)
         message = qsTr("Opened %1").arg(path)
         return true
+    }
+
+    // A track downloaded from the team (`r` from TeamServer.download), under the name it was uploaded with. It has no
+    // file until saved, is not unsaved and is not a recent file.
+    function openFromTeam(r, trackName) {
+        const read = readOpened(r)
+        if (!read)
+            return false
+        filePath = ""
+        teamName = trackName
+        show(read)
+        markSaved()
+        message = qsTr("Opened %1 from the team").arg(trackName)
+        return true
+    }
+
+    // What Upload to team sends the cones of: the touched-up list while locked, otherwise what Place cones would place
+    // now ({ cones, canvasCones, targetDistance }); null after a banner says why the track cannot be processed.
+    function uploadResult() {
+        const result = locked ? Touchups.result(track) : Post.run(track)
+        if (result.error) {
+            report(result.error.message, result.error.target)
+            return null
+        }
+        return result
     }
 
     // Opens the autosave backup as unsaved changes to the track it came from (`backup` from TrackFile.findBackup).
@@ -258,6 +296,7 @@ QtObject {
         if (!read)
             return false
         filePath = backup.trackPath
+        teamName = ""
         show(read)
         savedText = ""          // nothing on disk matches it: it stays unsaved until saved
         message = qsTr("Restored %1 from the backup made at %2").arg(name).arg(backup.time)
