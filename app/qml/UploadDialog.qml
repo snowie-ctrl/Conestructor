@@ -89,6 +89,7 @@ Dialog {
             objectName: "uploadName"
             Layout.fillWidth: true
             placeholderText: qsTr("Name this track")
+            maximumLength: 200          // the server keeps no more (coneRules.MAX_TRACK_NAME)
             enabled: !dialog.sending
             onAccepted: dialog.send()
         }

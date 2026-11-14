@@ -20,7 +20,7 @@ Dialog {
     property string statusText: ""      // "Connecting…", an error, the empty-team line, or "" once listed
     property bool downloading: false
     property string downloadName: ""
-    property var thumbs: ({})           // track id → thumbnail URL, for this session
+    property var thumbs: ({})           // track id → thumbnail URL, for this team code
 
     ListModel { id: tracksModel }
 
@@ -56,6 +56,9 @@ Dialog {
 
     Connections {
         target: TeamServer
+        function onCodeChanged() {
+            dialog.thumbs = ({})        // another team's track 12 is another track
+        }
         function onTracksListed(ok, tracks, error) {
             if (!dialog.visible)
                 return

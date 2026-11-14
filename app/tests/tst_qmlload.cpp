@@ -2714,6 +2714,101 @@ private slots:
         QMetaObject::invokeMethod(upload, "close");
         QTRY_VERIFY(!upload->property("visible").toBool());
     }
+
+    // Part 5's minor 3: thumbnails fetched under one team code are forgotten when the code changes, so another team's
+    // track with the same id never shows them.
+    void theListsThumbnailsGoWithTheCode()
+    {
+        FakeHttp server;
+        server.replyJson("GET", "/api/cone/tracks", 200,
+                         R"({"status": "ok", "tracks": [{"id": 12, "name": "Duck pond", "cones": 57,
+                             "uploaded": "2026-11-12T14:02:00Z", "bytes": 3000}]})");
+        QImage small(40, 30, QImage::Format_RGB32);
+        small.fill(Qt::gray);
+        server.reply("GET", "/api/cone/tracks/12/thumbnail", FakeReply{ 200, "image/jpeg", TeamServer::jpeg(small) });
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        QMetaObject::invokeMethod(w.window, "openFromTeam");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("teamTracksDialog"));
+        QTRY_VERIFY(!plain(dialog->property("thumbs")).toMap().isEmpty());
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Other team"), QUrl(), server.base()));
+        QVERIFY(plain(dialog->property("thumbs")).toMap().isEmpty());
+        QMetaObject::invokeMethod(dialog, "close");
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+    }
+
+    // Part 5's minor 4: the upload's name stops at 200 characters, where the server would cut it without a word.
+    void anUploadNameStopsAt200Characters()
+    {
+        FakeHttp server;
+        Loaded w;
+        QVERIFY(w.load(true));
+        QObject *settings = w.engine.singletonInstance<QObject *>("Conestructor", "Settings");
+        auto restore = qScopeGuard([settings]() { settings->setProperty("teamCode", QString()); });
+        settings->setProperty("teamCode", teamCodeFor(QStringLiteral("Our team"), QUrl(), server.base()));
+        QMetaObject::invokeMethod(w.window, "uploadToTeam");
+        QObject *dialog = w.window->findChild<QObject *>(QStringLiteral("uploadDialog"));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *name = w.named(QStringLiteral("uploadName"));
+        w.clickItem(name);
+        typeText(w.window, QString(205, QLatin1Char('x')));
+        QCOMPARE(name->property("text").toString(), QString(200, QLatin1Char('x')));
+        QMetaObject::invokeMethod(dialog, "close");
+        QTRY_VERIFY(!dialog->property("visible").toBool());
+    }
+
+    // Part 5's minor 5: a backup of a track opened from the team comes back under the team track's name, not as
+    // Untitled.
+    void aBackupOfATeamTrackKeepsItsName()
+    {
+        QObject *files = nullptr;
+        auto backup = [&files]() {
+            QVariantMap found;
+            QMetaObject::invokeMethod(files, "findBackup", Q_RETURN_ARG(QVariantMap, found));
+            return found;
+        };
+        {
+            Loaded w;
+            QVERIFY(w.load(true));
+            files = w.engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+            const QString path = dir.filePath(QStringLiteral("team-backup.cone"));
+            QVariant ok;
+            QMetaObject::invokeMethod(w.store, "saveTo", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, path));
+            QVERIFY(ok.toBool());
+            QVariantMap read;
+            QMetaObject::invokeMethod(files, "open", Q_RETURN_ARG(QVariantMap, read), Q_ARG(QString, path));
+            QMetaObject::invokeMethod(w.store, "openFromTeam", Q_RETURN_ARG(QVariant, ok), Q_ARG(QVariant, QVariant(read)),
+                                      Q_ARG(QVariant, QStringLiteral("Duck pond")));
+            QVERIFY(ok.toBool());
+            w.run(QStringLiteral("place"), { { "id", "e1" }, { "x", 40.0 }, { "y", 30.0 }, { "rotation", 0.0 } });
+            QMetaObject::invokeMethod(w.window, "backUp");
+            QCOMPARE(backup().value(QStringLiteral("name")).toString(), QStringLiteral("Duck pond"));
+            // the engine goes without a normal close: the backup stays, as after a crash
+        }
+        QQmlApplicationEngine engine;
+        engine.loadFromModule("Conestructor", "Main");
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        files = engine.singletonInstance<QObject *>("Conestructor", "TrackFile");
+        auto cleanUp = qScopeGuard([&files]() { QMetaObject::invokeMethod(files, "deleteBackup"); });
+        QObject *store = engine.singletonInstance<QObject *>("Conestructor", "TrackStore");
+        QObject *dialog = window->findChild<QObject *>(QStringLiteral("restoreDialog"));
+        QMetaObject::invokeMethod(window, "start", Q_ARG(QVariant, QString()));
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QQuickItem *button = findButton(window, QStringLiteral("Restore"));
+        QVERIFY(button);
+        QTest::mouseClick(window, Qt::LeftButton, {},
+                          button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+        QTRY_COMPARE(store->property("elementCount").toInt(), 4);
+        QCOMPARE(store->property("name").toString(), QStringLiteral("Duck pond"));
+        QVERIFY(store->property("fromTeam").toBool());
+        QVERIFY(store->property("dirty").toBool());
+        QCOMPARE(store->property("message").toString(),
+                 QStringLiteral("Restored Duck pond from the backup made at ") + backup().value(QStringLiteral("time")).toString());
+    }
 };
 
 QTEST_MAIN(TestQmlLoad)

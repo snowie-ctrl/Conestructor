@@ -296,7 +296,8 @@ QtObject {
         if (!read)
             return false
         filePath = backup.trackPath
-        teamName = ""
+        // A track from the team has no file; the backup notes keep its name (an Untitled one is backed up as Untitled).
+        teamName = backup.trackPath === "" && backup.name !== qsTr("Untitled") ? backup.name : ""
         show(read)
         savedText = ""          // nothing on disk matches it: it stays unsaved until saved
         message = qsTr("Restored %1 from the backup made at %2").arg(name).arg(backup.time)
