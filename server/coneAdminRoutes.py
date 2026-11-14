@@ -6,6 +6,7 @@ server and inside codes. server/coneAdmin.py on the owner's PC calls these route
 """
 import hmac
 import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -138,7 +139,7 @@ def teams():
 @coneAdminBP.route("/tracks", methods=["GET"])
 def tracks():
     team = request.args.get("team")
-    if team is not None and not team.isdigit():
+    if team is not None and not re.fullmatch(r"[0-9]+", team):     # isdigit() takes "²", which int() refuses
         return error("team must be a number")
     sql = ("SELECT k.id, k.teamId, t.name AS team, k.name, k.cones, k.uploaded, k.bytes FROM tracks k "
            "JOIN teams t ON t.id = k.teamId")

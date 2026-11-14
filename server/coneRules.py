@@ -33,7 +33,7 @@ def readTrack(data):
     """{"name", "cones"} read from an uploaded .cone's bytes. Refused when it is not a track file this server takes."""
     try:
         doc = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):     # RecursionError: nested too deep for json
         raise Refused("not a track file")
     if not isinstance(doc, dict) or doc.get("format") != FORMAT:
         raise Refused("not a track file")

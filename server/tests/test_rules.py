@@ -32,8 +32,9 @@ def doc(**change):
     (doc(name="   "), "the track has no name"),
     (doc(name=5), "the track has no name"),
     (doc(cones={}), "the track has no cone list"),
+    (b"[" * 100000 + b"]" * 100000, "not a track file"),       # final review, minor 7: too deep for json
 ], ids=["text", "not utf-8", "a list", "format", "version 2", "version true", "empty name", "blank name",
-        "number name", "cones an object"])
+        "number name", "cones an object", "deeply nested"])
 def test_aBadTrackFileIsRefused(rules, data, message):
     with pytest.raises(rules.Refused) as refused:
         rules.readTrack(data)

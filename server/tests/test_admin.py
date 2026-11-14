@@ -94,8 +94,11 @@ def test_theTracksOfOneTeamOrAll(useDb, adminClient):
     assert "WHERE" not in sql and params == ()
 
 
-def test_aBadTeamFilter(adminClient):
-    assert adminClient.get("/api/cone-admin/tracks?team=x").status_code == 400
+@pytest.mark.parametrize("team", ["x", "²", "١", "-1", ""], ids=["letter", "superscript two", "arabic one",
+                                                                         "negative", "empty"])
+def test_aBadTeamFilter(adminClient, team):
+    # Final review, minor 6: str.isdigit() takes "²", which int() then refuses (a 500).
+    assert adminClient.get("/api/cone-admin/tracks", query_string={"team": team}).status_code == 400
 
 
 def test_deletingATrackRemovesItsRowAndFiles(useDb, adminClient, rules):
