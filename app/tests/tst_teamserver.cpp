@@ -309,15 +309,178 @@ private slots:
         team.listTracks();
         QTRY_COMPARE(listed.count(), 1);
         lan.reset();                                          // left home: the LAN is gone
-        team.listTracks();
+        team.listTracks();                                    // part 5's minor 2: probes again at once
         QTRY_COMPARE_WITH_TIMEOUT(listed.count(), 2, slow);
-        QCOMPARE(listed.at(1).at(0).toBool(), false);
-        QCOMPARE(listed.at(1).at(2).toString(),
-                 QStringLiteral("Can't reach the team server (tried the LAN and the internet)."));
-        team.listTracks();                                    // probes again and finds the public address
-        QTRY_COMPARE_WITH_TIMEOUT(listed.count(), 3, slow);
-        QCOMPARE(listed.at(2).at(0).toBool(), true);
+        QCOMPARE(listed.at(1).at(0).toBool(), true);
         QCOMPARE(pub.count("/api/cone/tracks"), 1);
+    }
+
+    // Part 5's minor 2: Check after the remembered LAN has gone finds the public address too.
+    void aCheckAfterTheLanHasGoneFindsThePublicAddress()
+    {
+        auto lan = std::make_unique<FakeHttp>();
+        lan->replyJson("GET", "/api/cone/ping", 200, R"({"status": "ok"})");
+        lan->replyJson("GET", "/api/cone/team", 200, R"({"status": "ok", "name": "Our team"})");
+        FakeHttp pub;
+        pub.replyJson("GET", "/api/cone/team", 200, R"({"status": "ok", "name": "Our team"})");
+        TeamServer team;
+        team.setCode(teamCodeFor(QStringLiteral("Our team"), lan->base(), pub.base()));
+        QSignalSpy checked(&team, &TeamServer::checked);
+        team.check();
+        QTRY_COMPARE(checked.count(), 1);
+        lan.reset();
+        team.check();
+        QTRY_COMPARE_WITH_TIMEOUT(checked.count(), 2, slow);
+        QCOMPARE(checked.at(1).at(1).toString(), QStringLiteral("Connected to Our team (over the internet)"));
+    }
+
+    // Part 5's minor 2: a download that finds the remembered LAN gone says only the LAN was tried.
+    void aDownloadSaysWhichAddressWasTried()
+    {
+        auto lan = std::make_unique<FakeHttp>();
+        lan->replyJson("GET", "/api/cone/ping", 200, R"({"status": "ok"})");
+        lan->replyJson("GET", "/api/cone/tracks", 200, R"({"status": "ok", "tracks": []})");
+        FakeHttp pub;
+        TeamServer team;
+        team.setCode(teamCodeFor(QStringLiteral("Our team"), lan->base(), pub.base()));
+        QSignalSpy listed(&team, &TeamServer::tracksListed);
+        team.listTracks();
+        QTRY_COMPARE(listed.count(), 1);
+        lan.reset();
+        QSignalSpy downloaded(&team, &TeamServer::downloaded);
+        team.download(12);
+        QTRY_COMPARE_WITH_TIMEOUT(downloaded.count(), 1, slow);
+        QCOMPARE(downloaded.at(0).at(2).toString(), QStringLiteral("Can't reach the team server (tried the LAN)."));
+        QCOMPARE(pub.requests.size(), 0);
+    }
+
+    // Part 5's minor 1: a reply for the code before is not taken for the new one; Check and the list answer for the
+    // code now in place.
+    void aReplyForAnOldCodeIsNotTakenForTheNewOne()
+    {
+        FakeHttp before, now;
+        before.delay = 500;
+        before.replyJson("GET", "/api/cone/team", 200, R"({"status": "ok", "name": "Old team"})");
+        before.replyJson("GET", "/api/cone/tracks", 200,
+                         R"({"status": "ok", "tracks": [{"id": 1, "name": "Old", "cones": 1, "uploaded": "", "bytes": 1}]})");
+        now.replyJson("GET", "/api/cone/team", 200, R"({"status": "ok", "name": "New team"})");
+        now.replyJson("GET", "/api/cone/tracks", 200, R"({"status": "ok", "tracks": []})");
+        TeamServer team;
+        QSignalSpy checked(&team, &TeamServer::checked);
+        QSignalSpy listed(&team, &TeamServer::tracksListed);
+        team.setCode(teamCodeFor(QStringLiteral("Old team"), QUrl(), before.base()));
+        team.check();
+        team.listTracks();
+        QTRY_COMPARE(before.requests.size(), 2);
+        team.setCode(teamCodeFor(QStringLiteral("New team"), QUrl(), now.base()));
+        QTRY_COMPARE_WITH_TIMEOUT(checked.count(), 1, slow);
+        QTRY_COMPARE_WITH_TIMEOUT(listed.count(), 1, slow);
+        QTest::qWait(800);                                    // the old replies have come and gone
+        QCOMPARE(checked.count(), 1);
+        QCOMPARE(checked.at(0).at(1).toString(), QStringLiteral("Connected to New team (over the internet)"));
+        QCOMPARE(listed.count(), 1);
+        QVERIFY(listed.at(0).at(0).toBool());
+        QCOMPARE(listed.at(0).at(1).toList().size(), 0);
+    }
+
+    // Part 5's minor 1: a check whose code is then cleared ends with nothing to say (Preferences shows no result).
+    void aCheckForAClearedCodeSaysNothing()
+    {
+        FakeHttp before;
+        before.delay = 300;
+        before.replyJson("GET", "/api/cone/team", 200, R"({"status": "ok", "name": "Old team"})");
+        TeamServer team;
+        QSignalSpy checked(&team, &TeamServer::checked);
+        team.setCode(teamCodeFor(QStringLiteral("Old team"), QUrl(), before.base()));
+        team.check();
+        QTRY_COMPARE(before.requests.size(), 1);
+        team.setCode(QString());
+        QTRY_COMPARE_WITH_TIMEOUT(checked.count(), 1, slow);
+        QCOMPARE(checked.at(0).at(0).toBool(), false);
+        QCOMPARE(checked.at(0).at(1).toString(), QString());
+    }
+
+    // Part 5's minor 1: a code changed while the LAN is probed is probed again, not "Can't reach".
+    void aCodeChangedDuringTheLanProbeIsProbedAgain()
+    {
+        FakeHttp lan, pub;
+        lan.silent = true;
+        pub.replyJson("GET", "/api/cone/team", 200, R"({"status": "ok", "name": "New team"})");
+        TeamServer team;
+        team.setCode(teamCodeFor(QStringLiteral("Old team"), lan.base(), FakeHttp::closedPort()));
+        QSignalSpy checked(&team, &TeamServer::checked);
+        team.check();
+        QTRY_COMPARE(lan.requests.size(), 1);
+        team.setCode(teamCodeFor(QStringLiteral("New team"), QUrl(), pub.base()));
+        QTRY_COMPARE_WITH_TIMEOUT(checked.count(), 1, slow);
+        QCOMPARE(checked.at(0).at(1).toString(), QStringLiteral("Connected to New team (over the internet)"));
+    }
+
+    // Part 5's minor 1: an upload or download under the code before ends, unopened, when the code changes.
+    void aTransferEndsWhenTheCodeChanges()
+    {
+        FakeHttp before;
+        before.delay = 500;
+        before.reply("GET", "/api/cone/tracks/12/file",
+                     FakeReply{ 200, "application/json", TrackFile::documentBytes(document(), nullptr, -1) });
+        before.replyJson("POST", "/api/cone/tracks", 201, R"({"status": "ok", "id": 12})");
+        TeamServer team;
+        QSignalSpy downloaded(&team, &TeamServer::downloaded);
+        QSignalSpy uploaded(&team, &TeamServer::uploaded);
+        const QString changed = QStringLiteral("The team code changed while this was under way.");
+
+        team.setCode(teamCodeFor(QStringLiteral("Old team"), QUrl(), before.base()));
+        team.download(12);
+        QTRY_COMPARE(before.requests.size(), 1);
+        team.setCode(teamCodeFor(QStringLiteral("New team"), QUrl(), FakeHttp::closedPort()));
+        QTRY_COMPARE_WITH_TIMEOUT(downloaded.count(), 1, slow);
+        QCOMPARE(downloaded.at(0).at(0).toBool(), false);
+        QCOMPARE(downloaded.at(0).at(2).toString(), changed);
+        QVERIFY(!team.busy());
+
+        team.setCode(teamCodeFor(QStringLiteral("Old team"), QUrl(), before.base()));
+        team.upload(document(), -1, team.makeThumbnail(-1, 0.05, twoCones()));
+        QTRY_COMPARE(before.requests.size(), 2);
+        team.setCode(teamCodeFor(QStringLiteral("New team"), QUrl(), FakeHttp::closedPort()));
+        QTRY_COMPARE_WITH_TIMEOUT(uploaded.count(), 1, slow);
+        QCOMPARE(uploaded.at(0).at(0).toBool(), false);
+        QCOMPARE(uploaded.at(0).at(1).toString(), changed);
+        QVERIFY(!team.busy());
+    }
+
+    // Part 5's minor 9: Cancel while the LAN is probed ends the transfer at once, so Open pressed straight after is
+    // not dropped, and the cancelled one is never sent.
+    void cancelWhileTheLanIsProbedEndsAtOnce()
+    {
+        FakeHttp lan, pub;
+        lan.silent = true;
+        TeamServer team;
+        team.setCode(teamCodeFor(QStringLiteral("Our team"), lan.base(), pub.base()));
+        QSignalSpy downloaded(&team, &TeamServer::downloaded);
+        QSignalSpy uploaded(&team, &TeamServer::uploaded);
+        team.upload(document(), -1, team.makeThumbnail(-1, 0.05, twoCones()));
+        QTRY_COMPARE(lan.requests.size(), 1);
+        team.cancel();
+        QVERIFY(!team.busy());
+        QCOMPARE(uploaded.count(), 1);
+        QCOMPARE(uploaded.at(0).at(0).toBool(), false);
+        QCOMPARE(uploaded.at(0).at(1).toString(), QString());
+
+        team.download(12);
+        team.cancel();
+        QVERIFY(!team.busy());
+        QCOMPARE(downloaded.count(), 1);
+        QCOMPARE(downloaded.at(0).at(2).toString(), QString());
+
+        team.download(13);                                    // not on the team: the default 404
+        QVERIFY(team.busy());
+        QTRY_COMPARE_WITH_TIMEOUT(downloaded.count(), 2, slow);
+        QCOMPARE(downloaded.at(1).at(2).toString(), QStringLiteral("That track is no longer on the team."));
+        QTest::qWait(300);
+        QCOMPARE(downloaded.count(), 2);
+        QCOMPARE(uploaded.count(), 1);
+        QCOMPARE(pub.count("/api/cone/tracks"), 0);           // the cancelled ones were never sent
+        QCOMPARE(pub.count("/api/cone/tracks/12/file"), 0);
     }
 
     // ---- What the requests say ----

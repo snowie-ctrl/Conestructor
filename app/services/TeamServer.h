@@ -70,7 +70,9 @@ public:
     // JPEG bytes no larger than maxThumbnail (the quality is lowered until they fit); empty when they cannot be made.
     static QByteArray jpeg(const QImage &image);
 
-    // Answers with checked(): "Connected to <team> (on the LAN)" or "(over the internet)", or why not.
+    // Answers with checked(): "Connected to <team> (on the LAN)" or "(over the internet)", or why not. Check and the list
+    // always answer for the code in place when the answer comes: one for a code changed meanwhile is asked again (a
+    // check for a code since cleared answers with an empty message).
     Q_INVOKABLE void check();
     // Answers with tracksListed(): [{ id, name, cones, uploaded, uploadedText, bytes }], newest first.
     Q_INVOKABLE void listTracks();
@@ -81,7 +83,8 @@ public:
     // The document without its photo (TrackStore.documentText), the photo to add, and the thumbnail's file URL from
     // makeThumbnail. Answers with uploaded().
     Q_INVOKABLE void upload(const QString &documentText, int photoRef, const QUrl &thumbnail);
-    // Stops the upload or download under way; it answers with ok false and an empty error.
+    // Stops the upload or download under way; it answers with ok false and an empty error, at once while the server is
+    // still being found. One under way when the code changes ends with ok false and a sentence saying so.
     Q_INVOKABLE void cancel();
 
     // Tests hand in their own store; the app uses the QML engine's.
@@ -103,15 +106,24 @@ private:
     // A request to the team API; the ping goes without the key, since it may reach a machine that is not the server.
     QNetworkRequest request(const QUrl &base, const QString &route, int timeout, bool withKey = true) const;
     // Runs `then` with the address to use: the one that answered before, else the LAN when its ping answers like the
-    // server within probeTimeout, else the public one. An empty URL when there is none to try.
-    void withServer(const std::function<void(const QUrl &)> &then);
+    // server within probeTimeout, else the public one. An empty URL when there is none to try. `found` is true when the
+    // address was found for this request rather than remembered. Callers check the code has not changed meanwhile.
+    void withServer(const std::function<void(const QUrl &base, bool found)> &then);
+    // Whether a request to a remembered address that did not answer is worth finding the server again for: the code
+    // has both addresses, so the other one may answer.
+    bool mayFindAgain(bool found) const;
+    void runCheck(bool mayRetry);
+    void runList(bool mayRetry);
     // "" for a success; otherwise the sentence to show. Nothing coming back forgets the address that answered, so the
     // next request finds the server again.
-    QString failure(QNetworkReply *reply);
+    QString failure(QNetworkReply *reply, const QUrl &base, bool found);
     // After an error answer from the remembered LAN address that is not the server's JSON (another machine at that
     // address, on another network): forgets the address, so the next request probes again. True when it did.
     bool forgetForeignLan(QNetworkReply *reply, const QUrl &base);
-    QString unreachable() const;
+    // "Can't reach the team server", saying which addresses were tried for a request to `base` (empty when the LAN
+    // did not answer and there is no public address).
+    QString unreachable(const QUrl &base, bool found) const;
+    QString codeChangedMeanwhile() const;
     QString tooLarge() const;
     void setBusy(bool busy);
     // Writes a file in the session's folder: its path, or "" when it could not be written.
@@ -124,6 +136,8 @@ private:
     int m_generation = 0;
     bool m_busy = false;
     bool m_cancelled = false;
+    int m_transferSerial = 0;          // bumped by each upload or download, and by a cancel before anything was sent
+    bool m_uploading = false;
     QPointer<QNetworkReply> m_transfer;
     PhotoStore *m_photos = nullptr;
     QTemporaryDir m_files;

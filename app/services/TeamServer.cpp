@@ -234,15 +234,15 @@ QNetworkRequest TeamServer::request(const QUrl &base, const QString &route, int 
     return r;
 }
 
-void TeamServer::withServer(const std::function<void(const QUrl &)> &then)
+void TeamServer::withServer(const std::function<void(const QUrl &, bool)> &then)
 {
     if (m_base.isValid()) {
-        then(m_base);
+        then(m_base, false);
         return;
     }
     if (!m_parsed.lan.isValid()) {
         m_base = m_parsed.publicUrl;
-        then(m_base);
+        then(m_base, true);
         return;
     }
     QNetworkReply *reply = m_net->get(request(m_parsed.lan, QStringLiteral("/ping"), probeTimeout, false));
@@ -250,24 +250,37 @@ void TeamServer::withServer(const std::function<void(const QUrl &)> &then)
     connect(reply, &QNetworkReply::finished, this, [this, reply, then, generation]() {
         reply->deleteLater();
         if (generation != m_generation) {
-            then(QUrl());
+            then(QUrl(), true);         // the caller sees the code changed and starts over or stops
             return;
         }
         const bool ours = statusOf(reply) == 200
                           && QJsonDocument::fromJson(reply->readAll()).object().value(QStringLiteral("status")).toString()
                                  == QLatin1String("ok");
         m_base = ours ? m_parsed.lan : m_parsed.publicUrl;     // empty when the code has no public address
-        then(m_base);
+        then(m_base, true);
     });
 }
 
-QString TeamServer::unreachable() const
+bool TeamServer::mayFindAgain(bool found) const
 {
-    if (m_parsed.lan.isValid() && m_parsed.publicUrl.isValid())
+    return !found && m_parsed.lan.isValid() && m_parsed.publicUrl.isValid();
+}
+
+QString TeamServer::unreachable(const QUrl &base, bool found) const
+{
+    // Found now, the LAN was probed first unless the code has none; remembered, only that address was asked.
+    const bool lan = m_parsed.lan.isValid() && (found || base == m_parsed.lan);
+    const bool internet = base.isValid() && base == m_parsed.publicUrl;
+    if (lan && internet)
         return tr("Can't reach the team server (tried the LAN and the internet).");
-    if (m_parsed.lan.isValid())
+    if (lan)
         return tr("Can't reach the team server (tried the LAN).");
     return tr("Can't reach the team server (tried the internet).");
+}
+
+QString TeamServer::codeChangedMeanwhile() const
+{
+    return tr("The team code changed while this was under way.");
 }
 
 QString TeamServer::tooLarge() const
@@ -275,16 +288,16 @@ QString TeamServer::tooLarge() const
     return tr("Too large to upload (over 40 MB).");
 }
 
-QString TeamServer::failure(QNetworkReply *reply)
+QString TeamServer::failure(QNetworkReply *reply, const QUrl &base, bool found)
 {
     const int status = statusOf(reply);
     if (status == 0) {                  // nothing came back: refused, timed out, no route, TLS...
         m_base = QUrl();
-        return unreachable();
+        return unreachable(base, found);
     }
     if (status >= 200 && status < 300)
         return {};
-    if (forgetForeignLan(reply, m_base))
+    if (forgetForeignLan(reply, base))
         return tr("The server had a problem. Try again later.");
     if (status == 401)
         return tr("The team code was not accepted. Check it in Preferences \xE2\x80\xBA Team.");
@@ -319,22 +332,46 @@ void TeamServer::setBusy(bool busy)
 
 void TeamServer::check()
 {
+    runCheck(true);
+}
+
+void TeamServer::runCheck(bool mayRetry)
+{
     if (!m_parsed.valid) {
         emit checked(false, tr("Not a team code"));
         return;
     }
-    withServer([this](const QUrl &base) {
+    // The code changed before the answer came: ask again for the one in place, or say nothing when it was cleared.
+    const auto again = [this]() {
+        if (m_parsed.valid)
+            runCheck(true);
+        else
+            emit checked(false, QString());
+    };
+    const int generation = m_generation;
+    withServer([this, generation, mayRetry, again](const QUrl &base, bool found) {
+        if (generation != m_generation) {
+            again();
+            return;
+        }
         if (!base.isValid()) {
             emit checked(false, tr("Can't reach the team server"));
             return;
         }
         QNetworkReply *reply = m_net->get(request(base, QStringLiteral("/team"), requestTimeout));
-        connect(reply, &QNetworkReply::finished, this, [this, reply, base]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, base, found, generation, mayRetry, again]() {
             reply->deleteLater();
+            if (generation != m_generation) {
+                again();
+                return;
+            }
             const int status = statusOf(reply);
             if (status == 0) {
                 m_base = QUrl();
-                emit checked(false, tr("Can't reach the team server"));
+                if (mayRetry && mayFindAgain(found))
+                    runCheck(false);
+                else
+                    emit checked(false, tr("Can't reach the team server"));
             } else if (status != 200 && forgetForeignLan(reply, base)) {
                 emit checked(false, tr("The server had a problem. Try again later."));
             } else if (status == 401) {
@@ -353,19 +390,38 @@ void TeamServer::check()
 
 void TeamServer::listTracks()
 {
+    runList(true);
+}
+
+void TeamServer::runList(bool mayRetry)
+{
     if (!m_parsed.valid) {
         emit tracksListed(false, {}, tr("Not a team code"));
         return;
     }
-    withServer([this](const QUrl &base) {
+    const int generation = m_generation;
+    withServer([this, generation, mayRetry](const QUrl &base, bool found) {
+        if (generation != m_generation) {
+            listTracks();               // the code changed while the LAN was probed: list the new code's
+            return;
+        }
         if (!base.isValid()) {
-            emit tracksListed(false, {}, unreachable());
+            emit tracksListed(false, {}, unreachable(base, found));
             return;
         }
         QNetworkReply *reply = m_net->get(request(base, QStringLiteral("/tracks"), requestTimeout));
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, base, found, generation, mayRetry]() {
             reply->deleteLater();
-            const QString error = failure(reply);
+            if (generation != m_generation) {
+                listTracks();           // a list for the code before: ask again for this one
+                return;
+            }
+            if (statusOf(reply) == 0 && mayRetry && mayFindAgain(found)) {
+                m_base = QUrl();        // the remembered address has gone: find the server again, once
+                runList(false);
+                return;
+            }
+            const QString error = failure(reply, base, found);
             if (!error.isEmpty()) {
                 emit tracksListed(false, {}, error);
                 return;
@@ -399,14 +455,14 @@ void TeamServer::fetchThumbnail(int id)
     if (!m_parsed.valid)
         return;
     const int generation = m_generation;
-    withServer([this, id, generation](const QUrl &base) {
+    withServer([this, id, generation](const QUrl &base, bool found) {
         if (!base.isValid() || generation != m_generation)
             return;
         QNetworkReply *reply =
             m_net->get(request(base, QStringLiteral("/tracks/%1/thumbnail").arg(id), requestTimeout));
-        connect(reply, &QNetworkReply::finished, this, [this, reply, id, generation]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, id, generation, base, found]() {
             reply->deleteLater();
-            if (generation != m_generation || !failure(reply).isEmpty())
+            if (generation != m_generation || !failure(reply, base, found).isEmpty())
                 return;
             const QString path = saveFile(QStringLiteral("thumb-%1.jpg").arg(id), reply->readAll());
             if (path.isEmpty())
@@ -427,16 +483,21 @@ void TeamServer::download(int id)
     }
     setBusy(true);
     m_cancelled = false;
-    withServer([this, id](const QUrl &base) {
-        if (m_cancelled || !base.isValid()) {
+    m_uploading = false;
+    const int serial = ++m_transferSerial;
+    const int generation = m_generation;
+    withServer([this, id, serial, generation](const QUrl &base, bool found) {
+        if (serial != m_transferSerial)
+            return;                     // cancelled while the server was found: it has answered already
+        if (generation != m_generation || !base.isValid()) {
             setBusy(false);
-            emit downloaded(false, {}, m_cancelled ? QString() : unreachable());
+            emit downloaded(false, {}, generation != m_generation ? codeChangedMeanwhile() : unreachable(base, found));
             return;
         }
         QNetworkReply *reply = m_net->get(request(base, QStringLiteral("/tracks/%1/file").arg(id), transferTimeout));
         m_transfer = reply;
         connect(reply, &QNetworkReply::downloadProgress, this, &TeamServer::downloadProgress);
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, base, found, generation]() {
             reply->deleteLater();
             m_transfer = nullptr;
             setBusy(false);
@@ -444,11 +505,15 @@ void TeamServer::download(int id)
                 emit downloaded(false, {}, QString());
                 return;
             }
+            if (generation != m_generation) {       // another team's track: not opened
+                emit downloaded(false, {}, codeChangedMeanwhile());
+                return;
+            }
             if (statusOf(reply) == 404) {
                 emit downloaded(false, {}, tr("That track is no longer on the team."));
                 return;
             }
-            const QString error = failure(reply);
+            const QString error = failure(reply, base, found);
             if (!error.isEmpty()) {
                 emit downloaded(false, {}, error);
                 return;
@@ -483,10 +548,15 @@ void TeamServer::upload(const QString &documentText, int photoRef, const QUrl &t
     const QByteArray thumbnailBytes = picture.readAll();
     setBusy(true);
     m_cancelled = false;
-    withServer([this, file, thumbnailBytes](const QUrl &base) {
-        if (m_cancelled || !base.isValid()) {
+    m_uploading = true;
+    const int serial = ++m_transferSerial;
+    const int generation = m_generation;
+    withServer([this, file, thumbnailBytes, serial, generation](const QUrl &base, bool found) {
+        if (serial != m_transferSerial)
+            return;                     // cancelled while the server was found: it has answered already
+        if (generation != m_generation || !base.isValid()) {
             setBusy(false);
-            emit uploaded(false, m_cancelled ? QString() : unreachable());
+            emit uploaded(false, generation != m_generation ? codeChangedMeanwhile() : unreachable(base, found));
             return;
         }
         auto *form = new QHttpMultiPart(QHttpMultiPart::FormDataType);
@@ -496,7 +566,7 @@ void TeamServer::upload(const QString &documentText, int photoRef, const QUrl &t
         form->setParent(reply);
         m_transfer = reply;
         connect(reply, &QNetworkReply::uploadProgress, this, &TeamServer::uploadProgress);
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, base, found, generation]() {
             reply->deleteLater();
             m_transfer = nullptr;
             setBusy(false);
@@ -504,7 +574,11 @@ void TeamServer::upload(const QString &documentText, int photoRef, const QUrl &t
                 emit uploaded(false, QString());
                 return;
             }
-            const QString error = failure(reply);
+            if (generation != m_generation) {       // its answer belongs to the team before
+                emit uploaded(false, codeChangedMeanwhile());
+                return;
+            }
+            const QString error = failure(reply, base, found);
             emit uploaded(error.isEmpty(), error);
         });
     });
@@ -512,7 +586,18 @@ void TeamServer::upload(const QString &documentText, int photoRef, const QUrl &t
 
 void TeamServer::cancel()
 {
-    m_cancelled = true;
-    if (m_transfer)
-        m_transfer->abort();
+    if (!m_busy)
+        return;
+    if (m_transfer) {
+        m_cancelled = true;
+        m_transfer->abort();            // its finished() answers
+        return;
+    }
+    // Still finding the server: nothing was sent, so it ends now and the probe's answer is ignored.
+    ++m_transferSerial;
+    setBusy(false);
+    if (m_uploading)
+        emit uploaded(false, QString());
+    else
+        emit downloaded(false, {}, QString());
 }

@@ -1,7 +1,7 @@
 #pragma once
 // A small HTTP/1.1 server for the tests (this Qt has no Qt HttpServer): it answers canned replies by method and path,
 // records every request it was sent (method, path, headers in lower case, body), and can stay silent to look like a
-// server that never answers. One request per connection: every answer says "Connection: close".
+// server that never answers, or answer late. One request per connection: every answer says "Connection: close".
 #include <QByteArray>
 #include <QHash>
 #include <QHostAddress>
@@ -12,6 +12,7 @@
 #include <QString>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QUrl>
 
 struct FakeRequest
@@ -75,6 +76,7 @@ public:
 
     QList<FakeRequest> requests;
     bool silent = false;    // read requests but never answer
+    int delay = 0;          // ms before each answer
 
 private:
     void read(QTcpSocket *socket)
@@ -105,10 +107,16 @@ private:
         const FakeReply answer = m_replies.value(request.method + ' ' + request.path,
                                                  FakeReply{ 404, "application/json",
                                                             R"({"status": "error", "message": "no such route"})" });
-        socket->write("HTTP/1.1 " + QByteArray::number(answer.status) + " Fake\r\nContent-Type: " + answer.type
-                      + "\r\nContent-Length: " + QByteArray::number(answer.body.size())
-                      + "\r\nConnection: close\r\n\r\n" + answer.body);
-        socket->disconnectFromHost();
+        const auto send = [socket, answer]() {
+            socket->write("HTTP/1.1 " + QByteArray::number(answer.status) + " Fake\r\nContent-Type: " + answer.type
+                          + "\r\nContent-Length: " + QByteArray::number(answer.body.size())
+                          + "\r\nConnection: close\r\n\r\n" + answer.body);
+            socket->disconnectFromHost();
+        };
+        if (delay > 0)
+            QTimer::singleShot(delay, socket, send);
+        else
+            send();
     }
 
     QTcpServer m_server;
